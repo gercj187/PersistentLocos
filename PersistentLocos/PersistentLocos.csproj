@@ -1,10 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<AssemblyName>PersistentLocos</AssemblyName>
 		<TargetFramework>net48</TargetFramework>
 		<LangVersion>latest</LangVersion>
-		<Nullable>enable</Nullable>
-		<WarningsAsErrors>CS8600;CS8602;CS8603</WarningsAsErrors>
 	</PropertyGroup>
 
 	<!-- Derail Valley -->
@@ -20,16 +17,23 @@
 
 	<!-- Unity -->
 	<ItemGroup>
-		<Reference Include="UnityEngine" />
-		<Reference Include="UnityEngine.CoreModule" />
+		<Reference Include="UnityEngine">
+			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\UnityEngine.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.CoreModule">
+			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+		</Reference>
 		<Reference Include="UnityEngine.PhysicsModule">
-		  <HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.IMGUIModule">
+			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
 		</Reference>
 	</ItemGroup>
 
 	<!-- Mod Loader -->
 	<ItemGroup>
-		<PackageReference Include="UnityModManager" Version="0.27.2" />
+		<PackageReference Include="UnityModManager" Version="0.32.4" />
 	</ItemGroup>
 
 	<!-- Null Checking -->
