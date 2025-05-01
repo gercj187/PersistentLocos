@@ -1,58 +1,37 @@
 using System;
 using System.IO;
-using Newtonsoft.Json;
+using DV;
 using UnityEngine;
 using UnityModManagerNet;
 
 namespace PersistentLocos
 {
     public static class LocoSpawnState
-    {
-        private static string SavePath => Path.Combine(UnityModManager.modsPath, "PersistentLocos", "locoState.json");
+	{
+		private static int _count = 0;
+		public static int Count => _count;
 
-        private static int _count = 0;
-        public static int Count => _count;
+		private const string SaveKey = "PersistentLocos_LocoCount";
 
-        public static void Load()
-        {
-            try
-            {
-                if (File.Exists(SavePath))
-                {
-                    string json = File.ReadAllText(SavePath);
-                    _count = JsonConvert.DeserializeObject<int>(json);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.Log($"[PersistentLocos] Failed to load counter: {ex}");
-                _count = 0;
-            }
-        }
+		public static void LoadFrom(SaveGameData saveData)
+		{
+			int? maybeValue = saveData.GetInt(SaveKey);
+			_count = maybeValue.HasValue ? maybeValue.Value : 0;
+		}
 
-        public static void Save()
-        {
-            try
-            {
-                string json = JsonConvert.SerializeObject(_count, Formatting.Indented);
-                File.WriteAllText(SavePath, json);
-            }
-            catch (Exception ex)
-            {
-                Debug.Log($"[PersistentLocos] Failed to save counter: {ex}");
-            }
-        }
+		public static void SaveTo(SaveGameData saveData)
+		{
+			saveData.SetInt(SaveKey, _count);
+		}
 
-        public static void Reset()
-        {
-            _count = 0;
-            Save();
-        }
+		public static void Reset()
+		{
+			_count = 0;
+		}
 
-        public static void Increment()
-        {
-            _count++;
-            Save();
-        }
-    }
+		public static void Increment()
+		{
+			_count++;
+		}
+	}
 }

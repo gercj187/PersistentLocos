@@ -17,7 +17,6 @@ namespace PersistentLocos
             var harmony = new Harmony(modEntry.Info.Id);
             harmony.PatchAll();
 
-            LocoSpawnState.Load();
             modEntry.Logger.Log($"[PersistentLocos] Counter loaded {LocoSpawnState.Count} registered locomotives...");
 
             return true;
