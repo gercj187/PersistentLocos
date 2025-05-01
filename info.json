@@ -1,10 +1,10 @@
 {
 	"Id": "PersistentLocos",
-	"Version": "0.99.3",
+	"Version": "0.99.4",
 	"DisplayName": "Persistent Locos",
 	"Author": "CJ187",
 	"Credits": "Coookie, NotAnOption and ChatGPT",
 	"EntryMethod": "PersistentLocos.Main.Load",
 	"ManagerVersion": "0.27.2",
-  "HomePage": "https://www.nexusmods.com/derailvalley/mods/1153"
+	"HomePage": "https://www.nexusmods.com/derailvalley/mods/1159"
 }
