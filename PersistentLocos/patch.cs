@@ -1,9 +1,25 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
+using System.Linq;
 using DV;
+using DV.Utils;
+using DV.Player;
+using DV.Common;
+using DV.Booklets;
+using DV.Logic.Job;
 using DV.ThingTypes;
+using DV.UserManagement;
+using DV.Scenarios.Common;
+using DV.Localization.Debug;
+using DV.JObjectExtstensions;
+using DV.ThingTypes.TransitionHelpers;
 using HarmonyLib;
+using UnityModManagerNet;
 using UnityEngine;
+using UnityEngine.SceneManagement;
+using Debug = UnityEngine.Debug;
 
 namespace PersistentLocos
 {
@@ -14,6 +30,7 @@ namespace PersistentLocos
         {
             LocoSpawnState.Reset();
             Debug.Log("[PersistentLocos] New career detected – counter reset.");
+			Debug.Log($"[PersistentLocos] Starting new game. LocoLimit (from settings): {Main.settings.LocoLimit}");
         }
     }
 
@@ -69,7 +86,7 @@ namespace PersistentLocos
 
 			if (LocoSpawnState.Count >= Main.settings.LocoLimit)
 			{
-				Debug.Log("[PersistentLocos] Maximum locomotive limit reached – spawn blocked.");
+				//Debug.Log("[PersistentLocos] Maximum locomotive limit reached – spawn blocked.");
 				__result = null;
 				return false;
 			}
@@ -107,8 +124,46 @@ namespace PersistentLocos
 			__instance.OnInternalDataUpdate += (saveData) =>
 			{
 				LocoSpawnState.SaveTo(saveData);
-				Debug.Log($"[PersistentLocos] Saved locomotive count to save: {LocoSpawnState.Count}");
+                //Debug.Log($"[PersistentLocos] Saved locomotive count to save: {LocoSpawnState.Count}");
+                //Debug.Log($"[PersistentLocos] Saved LocoLimit to save: {Main.settings.LocoLimit}");
 			};
+		}
+	}
+		
+	[HarmonyPatch]
+	public static class Patch_StationLocoSpawnerDistance
+	{
+		static MethodBase TargetMethod()
+		{
+			return AccessTools.Method(typeof(SaveGameManager), "Start");
+		}
+
+		static void Postfix()
+		{
+			CoroutineDispatcher.Instance.RunCoroutine(AdjustSpawnerDistances());
+		}
+
+		static IEnumerator AdjustSpawnerDistances()
+		{
+			yield return new WaitUntil(() => AStartGameData.carsAndJobsLoadingFinished);
+			yield return new WaitForSeconds(5f);
+
+			var spawners = GameObject.FindObjectsOfType<StationLocoSpawner>();
+			foreach (var spawner in spawners)
+			{
+				spawner.spawnLocoPlayerSqrDistanceFromTrack = 625000000f; // 25
+			}
+
+			//Debug.Log($"[PersistentLocos] Temporarily set spawn distance to 25km on {spawners.Length} StationLocoSpawner(s).");
+
+			yield return new WaitForSeconds(5f);
+
+			foreach (var spawner in spawners)
+			{
+				spawner.spawnLocoPlayerSqrDistanceFromTrack = 25000000f; // 5 km
+			}
+
+			//Debug.Log($"[PersistentLocos] Reset spawn distance to 5km on {spawners.Length} StationLocoSpawner(s).");
 		}
 	}
 	

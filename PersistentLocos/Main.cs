@@ -24,7 +24,7 @@ namespace PersistentLocos
 
         static void OnGUI(UnityModManager.ModEntry modEntry)
         {
-            GUILayout.Label("Maximum number of locomotives:");
+            GUILayout.Label("Maximum number of locomotives:     (Default = 30");
             settings.LocoLimit = (int)GUILayout.HorizontalSlider(settings.LocoLimit, 1, 50);
             GUILayout.Label($"Current limit: {settings.LocoLimit}");
         }

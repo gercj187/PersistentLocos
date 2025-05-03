@@ -4,7 +4,7 @@ namespace PersistentLocos
 {
     public class Settings : UnityModManager.ModSettings
     {
-        public int LocoLimit = 29;
+        public int LocoLimit = 30;
 
         public override void Save(UnityModManager.ModEntry modEntry)
         {
