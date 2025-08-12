@@ -1,7 +1,7 @@
 {
 	"Id": "PersistentLocos",
-	"Version": "1.00.0",
-	"DisplayName": "Persistent Locos",
+	"Version": "1.02.0",
+	"DisplayName": "PersistentLocos",
 	"Author": "CJ187",
 	"Credits": "Coookie, NotAnOption and ChatGPT",
 	"EntryMethod": "PersistentLocos.Main.Load",
