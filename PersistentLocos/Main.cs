@@ -52,15 +52,36 @@ namespace PersistentLocos
         static void OnGUI(UnityModManager.ModEntry modEntry)
         {
             if (Settings == null) return;
-			
+
             GUILayout.Space(5);
             GUILayout.Label($"Maximum number of locomotives (Default = 31) : {Settings.LocoLimit}");
             int newLimit = Mathf.RoundToInt(GUILayout.HorizontalSlider(Settings.LocoLimit, 1, 50, GUILayout.Width(480)));
             Settings.LocoLimit = Mathf.Clamp(newLimit, 1, 50);
 
             GUILayout.Space(5);
+
+            // --- BEGIN: Sync persistent damage <-> blockLocomotiveFees ---
+            bool prevPersistent = Settings.enablePersistentDamage;
             Settings.enablePersistentDamage = GUILayout.Toggle(Settings.enablePersistentDamage, "Enable persistent damage");
             GUILayout.Label("(Removes all locomotives from fees and from automatic maintenance)");
+
+            if (Settings.enablePersistentDamage != prevPersistent)
+            {
+                // Wenn persistenter Schaden an ist, blocken wir loco fees; wenn aus, geben wir sie wieder frei.
+                Settings.blockLocomotiveFees = Settings.enablePersistentDamage;
+                Log($"Persistent damage {(Settings.enablePersistentDamage ? "enabled" : "disabled")} -> blockLocomotiveFees = {Settings.blockLocomotiveFees}");
+
+                // UI sofort aktualisieren, damit Preise/Fees in der PitStop-UI korrekt sind
+                try
+                {
+                    PersistentLocos.Plus.Helpers.RefreshPitStopsForAllSelected();
+                }
+                catch (Exception ex)
+                {
+                    Warn("PitStop UI refresh after toggle failed: " + ex.Message);
+                }
+            }
+            // --- END: Sync persistent damage <-> blockLocomotiveFees ---
 
             GUILayout.Space(10);
             bool wasEnabled = Settings.enableUnownedServiceMultiplier;
@@ -69,7 +90,6 @@ namespace PersistentLocos
                 "Apply service multiplier to unowned locomotives"
             );
 
-            
             if (Settings.enableUnownedServiceMultiplier)
             {
                 GUILayout.Space(10);
@@ -96,6 +116,10 @@ namespace PersistentLocos
             {
                 // Alias sicher synchronisieren
                 Settings.serviceCostMultiplierForNonOwned = Settings.unownedServiceMultiplier;
+
+                // Safety: blockLocomotiveFees folgt immer persistentDamage
+                Settings.blockLocomotiveFees = Settings.enablePersistentDamage;
+
                 Settings.Save(modEntry);
                 Log("Settings saved.");
             }

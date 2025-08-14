@@ -36,172 +36,166 @@ namespace PersistentLocos
         {
             LocoSpawnState.Reset();
             Debug.Log("[PersistentLocos] New career detected – counter reset.");
-			Debug.Log($"[PersistentLocos] Starting new game. LocoLimit (from settings): {Main.Settings.LocoLimit}");
+            Debug.Log($"[PersistentLocos] Starting new game. LocoLimit (from settings): {Main.Settings.LocoLimit}");
         }
     }
 
     [HarmonyPatch(typeof(UnusedTrainCarDeleter), "AreDeleteConditionsFulfilled")]
-	class Patch_AreDeleteConditionsFulfilled
-	{
-		static bool Prefix(TrainCar trainCar, ref bool __result)
-		{
-			var livery = trainCar.carLivery;
-			bool isLoco = trainCar.IsLoco;
-			bool isTender = CarTypes.IsTender(livery);
+    class Patch_AreDeleteConditionsFulfilled
+    {
+        static bool Prefix(TrainCar trainCar, ref bool __result)
+        {
+            var livery = trainCar.carLivery;
+            bool isLoco = trainCar.IsLoco;
+            bool isTender = CarTypes.IsTender(livery);
 
-			if (isLoco || isTender)
-			{
-				__result = false;
-				return false;
-			}
+            if (isLoco || isTender)
+            {
+                __result = false;
+                return false;
+            }
 
-			return true;
-		}
-	}
-	
-	[HarmonyPatch]
-	class Patch_CarSpawner_SpawnCar_Blocker
-	{
-		static MethodBase TargetMethod()
-		{
-			var railTrackType = AccessTools.TypeByName("RailTrack");
-			return typeof(CarSpawner).GetMethod("SpawnCar", new[] {
-				typeof(GameObject), railTrackType, typeof(Vector3), typeof(Vector3),
-				typeof(bool), typeof(bool)
-			});
-		}
-
-		static bool Prefix(GameObject carToSpawn, bool playerSpawnedCar, ref TrainCar __result)
-		{
-			if (carToSpawn == null) 
-				return true;
-
-			var trainCar = carToSpawn.GetComponent<TrainCar>();
-			if (trainCar == null) 
-				return true;
-
-			var livery = trainCar.carLivery;
-			bool isLoco = trainCar.IsLoco;
-			bool isTender = CarTypes.IsTender(livery);
-			
-			if (!isLoco && !isTender)
-				return true;
-
-			if (playerSpawnedCar) 
-				return true;
-
-			if (LocoSpawnState.Count >= Main.Settings.LocoLimit)
-			{
-				//Debug.Log("[PersistentLocos] Maximum locomotive limit reached – spawn blocked.");
-				__result = null;
-				return false;
-			}
-
-			return true;
-		}
-	}
+            return true;
+        }
+    }
 
     [HarmonyPatch]
-	class Patch_CarSpawner_SpawnCar_Logger
-	{
-		static MethodBase TargetMethod()
-		{
-			var railTrackType = AccessTools.TypeByName("RailTrack");
-			return typeof(CarSpawner).GetMethod("SpawnCar", new[] {
-				typeof(GameObject), railTrackType, typeof(Vector3), typeof(Vector3),
-				typeof(bool), typeof(bool)
-			});
-		}
+    class Patch_CarSpawner_SpawnCar_Blocker
+    {
+        static MethodBase TargetMethod()
+        {
+            var railTrackType = AccessTools.TypeByName("RailTrack");
+            return typeof(CarSpawner).GetMethod("SpawnCar", new[] {
+                typeof(GameObject), railTrackType, typeof(Vector3), typeof(Vector3),
+                typeof(bool), typeof(bool)
+            });
+        }
 
-		static void Postfix(TrainCar __result, bool playerSpawnedCar)
-		{
-			if (__result == null || !__result.IsLoco || playerSpawnedCar) return;
+        static bool Prefix(GameObject carToSpawn, bool playerSpawnedCar, ref TrainCar __result)
+        {
+            if (carToSpawn == null)
+                return true;
 
-			LocoSpawnState.Increment();
-			Debug.Log($"[PersistentLocos] Locomotive #{LocoSpawnState.Count} registered Type: {__result.carLivery?.id}, ID: {__result.ID}");
-			if (__result.brakeSystem != null && __result.brakeSystem.hasHandbrake)
-			{
-				__result.brakeSystem.SetHandbrakePosition(1f);
-				Debug.Log($"[PersistentLocos] Handbrake fully applied for locomotive ID: {__result.ID}");
-			}
-		}
-	}
-	
-	[HarmonyPatch(typeof(SaveGameManager), "Start")]
-	class Patch_SaveGameManager_Start
-	{
-		static void Postfix(SaveGameManager __instance)
-		{
-			__instance.OnInternalDataUpdate += (saveData) =>
-			{
-				LocoSpawnState.SaveTo(saveData);
-                //Debug.Log($"[PersistentLocos] Saved locomotive count to save: {LocoSpawnState.Count}");
-                //Debug.Log($"[PersistentLocos] Saved LocoLimit to save: {Main.Settings.LocoLimit}");
-			};
-		}
-	}
-		
-	[HarmonyPatch]
-	public static class Patch_StationLocoSpawnerDistance
-	{
-		static MethodBase TargetMethod()
-		{
-			return AccessTools.Method(typeof(SaveGameManager), "Start");
-		}
+            var trainCar = carToSpawn.GetComponent<TrainCar>();
+            if (trainCar == null)
+                return true;
 
-		static void Postfix()
-		{
-			CoroutineDispatcher.Instance.RunCoroutine(AdjustSpawnerDistances());
-		}
+            var livery = trainCar.carLivery;
+            bool isLoco = trainCar.IsLoco;
+            bool isTender = CarTypes.IsTender(livery);
 
-		static IEnumerator AdjustSpawnerDistances()
-		{
-			yield return new WaitUntil(() => AStartGameData.carsAndJobsLoadingFinished);
-			yield return new WaitForSeconds(5f);
+            if (!isLoco && !isTender)
+                return true;
 
-			var spawners = GameObject.FindObjectsOfType<StationLocoSpawner>();
-			foreach (var spawner in spawners)
-			{
-				spawner.spawnLocoPlayerSqrDistanceFromTrack = 625000000f; // 25
-			}
+            if (playerSpawnedCar)
+                return true;
 
-			//Debug.Log($"[PersistentLocos] Temporarily set spawn distance to 25km on {spawners.Length} StationLocoSpawner(s).");
+            if (LocoSpawnState.Count >= Main.Settings.LocoLimit)
+            {
+                __result = null;
+                return false;
+            }
 
-			yield return new WaitForSeconds(5f);
+            return true;
+        }
+    }
 
-			foreach (var spawner in spawners)
-			{
-				spawner.spawnLocoPlayerSqrDistanceFromTrack = 25000000f; // 5 km
-			}
+    [HarmonyPatch]
+    class Patch_CarSpawner_SpawnCar_Logger
+    {
+        static MethodBase TargetMethod()
+        {
+            var railTrackType = AccessTools.TypeByName("RailTrack");
+            return typeof(CarSpawner).GetMethod("SpawnCar", new[] {
+                typeof(GameObject), railTrackType, typeof(Vector3), typeof(Vector3),
+                typeof(bool), typeof(bool)
+            });
+        }
 
-			//Debug.Log($"[PersistentLocos] Reset spawn distance to 5km on {spawners.Length} StationLocoSpawner(s).");
-		}
-	}
-	
-	[HarmonyPatch(typeof(StartGameData_FromSaveGame), "MakeCurrent")]
-	class Patch_StartGameData_FromSaveGame_MakeCurrent
-	{
-		static void Postfix(StartGameData_FromSaveGame __instance)
-		{
-			var saveData = __instance.GetSaveGameData();
-			if (saveData != null)
-			{
-				LocoSpawnState.LoadFrom(saveData);
-				Debug.Log($"[PersistentLocos] Loaded locomotive count from save (late): {LocoSpawnState.Count}");
-			}
-			else
-			{
-				Debug.LogWarning("[PersistentLocos] SaveGameData is null – cannot load counter (late)");
-			}
-		}
-	}
+        static void Postfix(TrainCar __result, bool playerSpawnedCar)
+        {
+            if (__result == null || !__result.IsLoco || playerSpawnedCar) return;
+
+            LocoSpawnState.Increment();
+            Debug.Log($"[PersistentLocos] Locomotive #{LocoSpawnState.Count} registered Type: {__result.carLivery?.id}, ID: {__result.ID}");
+            if (__result.brakeSystem != null && __result.brakeSystem.hasHandbrake)
+            {
+                __result.brakeSystem.SetHandbrakePosition(1f);
+                Debug.Log($"[PersistentLocos] Handbrake fully applied for locomotive ID: {__result.ID}");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(SaveGameManager), "Start")]
+    class Patch_SaveGameManager_Start
+    {
+        static void Postfix(SaveGameManager __instance)
+        {
+            __instance.OnInternalDataUpdate += (saveData) =>
+            {
+                LocoSpawnState.SaveTo(saveData);
+            };
+        }
+    }
+
+    [HarmonyPatch]
+    public static class Patch_StationLocoSpawnerDistance
+    {
+        static MethodBase TargetMethod()
+        {
+            return AccessTools.Method(typeof(SaveGameManager), "Start");
+        }
+
+        static void Postfix()
+        {
+            CoroutineDispatcher.Instance.RunCoroutine(AdjustSpawnerDistances());
+        }
+
+        static IEnumerator AdjustSpawnerDistances()
+        {
+            yield return new WaitUntil(() => AStartGameData.carsAndJobsLoadingFinished);
+            yield return new WaitForSeconds(5f);
+
+            var spawners = GameObject.FindObjectsOfType<StationLocoSpawner>();
+            foreach (var spawner in spawners)
+            {
+                // temporarily increase to spawn across the map after load
+                spawner.spawnLocoPlayerSqrDistanceFromTrack = 625000000f; // 25 km^2
+            }
+
+            yield return new WaitForSeconds(5f);
+
+            foreach (var spawner in spawners)
+            {
+                // restore normal distance
+                spawner.spawnLocoPlayerSqrDistanceFromTrack = 25000000f; // 5 km^2
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(StartGameData_FromSaveGame), "MakeCurrent")]
+    class Patch_StartGameData_FromSaveGame_MakeCurrent
+    {
+        static void Postfix(StartGameData_FromSaveGame __instance)
+        {
+            var saveData = __instance.GetSaveGameData();
+            if (saveData != null)
+            {
+                LocoSpawnState.LoadFrom(saveData);
+                Debug.Log($"[PersistentLocos] Loaded locomotive count from save (late): {LocoSpawnState.Count}");
+            }
+            else
+            {
+                Debug.LogWarning("[PersistentLocos] SaveGameData is null – cannot load counter (late)");
+            }
+        }
+    }
 }
 
-
-namespace PersistentLocos {
-
-// ---- Embedded from original CoroutineDispatcher.cs ----
-public class CoroutineDispatcher : MonoBehaviour
+namespace PersistentLocos
+{
+    // Simple coroutine host
+    public class CoroutineDispatcher : MonoBehaviour
     {
         private static CoroutineDispatcher _instance;
 
@@ -225,8 +219,8 @@ public class CoroutineDispatcher : MonoBehaviour
         }
     }
 
-// ---- Embedded from original LocoSpawnState.cs ----
-public static class LocoSpawnState
+    // Save/load for loco spawn state and limit
+    public static class LocoSpawnState
     {
         private static int _count = 0;
         public static int Count => _count;
@@ -257,9 +251,6 @@ public static class LocoSpawnState
         {
             saveData.SetInt(CountSaveKey, _count);
             saveData.SetInt(LimitSaveKey, Main.Settings.LocoLimit);
-
-            //Debug.Log($"[PersistentLocos] Saved locomotive count: {_count}");
-            //Debug.Log($"[PersistentLocos] Saved LocoLimit: {Main.Settings.LocoLimit}");
         }
 
         public static void Reset()
@@ -274,17 +265,18 @@ public static class LocoSpawnState
     }
 }
 
-// PersistentLocosPlus/Patch.cs  (v1.10.2)
+// ===================== PersistentLocosPlus =====================
 
 namespace PersistentLocos.Plus
 {
-    // ============================================================
-    // A) DV: Lokomotiv-Gebühren neutralisieren (nur Loks)
-    // ============================================================
+    // ------------------------------------------------------------
+    // A) Neutralize locomotive fees (loco/tender only)
+    // ------------------------------------------------------------
     [HarmonyPatch]
     internal static class LocoDebt_GetTotalPrice_Overrides
     {
         private static readonly List<MethodBase> _targets = new();
+        private static bool _notifiedOnce;
 
         static bool Prepare()
         {
@@ -308,11 +300,17 @@ namespace PersistentLocos.Plus
 
             if (_targets.Count == 0)
             {
-                PersistentLocos.Main.Warn("LocoDebt_GetTotalPrice_Overrides: no targets.");
+                // Silent: only log once and only if debug logging is enabled
+                if (PersistentLocos.Main.Settings.enableLogging && !_notifiedOnce)
+                {
+                    PersistentLocos.Main.Log("LocoDebt_GetTotalPrice_Overrides: no targets (OK for this build).");
+                    _notifiedOnce = true;
+                }
                 return false;
             }
 
-            PersistentLocos.Main.Log("Neutralizing GetTotalPrice() for " + _targets.Count + " loco-debt override(s).");
+            if (PersistentLocos.Main.Settings.enableLogging)
+                PersistentLocos.Main.Log("Neutralizing GetTotalPrice() for " + _targets.Count + " loco-debt override(s).");
             return true;
         }
 
@@ -331,6 +329,7 @@ namespace PersistentLocos.Plus
     internal static class LocoDebt_IsPayable_Overrides
     {
         private static readonly List<MethodBase> _targets = new();
+        private static bool _notifiedOnce;
 
         static bool Prepare()
         {
@@ -354,11 +353,17 @@ namespace PersistentLocos.Plus
 
             if (_targets.Count == 0)
             {
-                PersistentLocos.Main.Warn("LocoDebt_IsPayable_Overrides: no targets.");
+                // Silent: only log once and only if debug logging is enabled
+                if (PersistentLocos.Main.Settings.enableLogging && !_notifiedOnce)
+                {
+                    PersistentLocos.Main.Log("LocoDebt_IsPayable_Overrides: no targets (OK for this build).");
+                    _notifiedOnce = true;
+                }
                 return false;
             }
 
-            PersistentLocos.Main.Log("Neutralizing IsPayable for " + _targets.Count + " loco-debt override(s).");
+            if (PersistentLocos.Main.Settings.enableLogging)
+                PersistentLocos.Main.Log("Neutralizing IsPayable for " + _targets.Count + " loco-debt override(s).");
             return true;
         }
 
@@ -373,16 +378,16 @@ namespace PersistentLocos.Plus
         }
     }
 
-    // ============================================================
-    // B) Ownership-Resolver (Restoration/playerSpawned/unique => owned)
-    // ============================================================
+    // ------------------------------------------------------------
+    // B) Ownership resolver (restoration/playerSpawned/unique => owned)
+    // ------------------------------------------------------------
     internal static class Ownership
     {
         private static bool _init;
         private static Assembly _loAsm;
 
         private static MethodInfo _isOwned_TrainCar; // bool IsOwned(TrainCar)
-        private static object     _isOwned_TrainCarTarget; // Instanz falls nicht statisch
+        private static object     _isOwned_TrainCarTarget; // instance if non-static
         private static MethodInfo _isOwned_Guid;     // bool IsOwned(string)
         private static object     _isOwned_GuidTarget;
 
@@ -390,6 +395,7 @@ namespace PersistentLocos.Plus
         private static readonly List<MemberInfo> _ownedCarCollections  = new();
 
         private static Type TrainCarT => AccessTools.TypeByName("TrainCar") ?? AccessTools.TypeByName("DV.TrainCar");
+        private static bool _loggedLoMissingOnce;
 
         private static void Init()
         {
@@ -423,16 +429,20 @@ namespace PersistentLocos.Plus
                         }
                     }
 
-                    Main.Log("[PLP] LO ownership resolver ready: " +
-                             $"{(_isOwned_TrainCar!=null?"IsOwned(TrainCar) ":"")}{(_isOwned_Guid!=null?"IsOwned(Guid) ":"")}" +
-                             $" GCols={_ownedGuidCollections.Count} CCols={_ownedCarCollections.Count}");
+                    if (Main.Settings.enableLogging)
+                        Main.Log("[PLP] LO ownership resolver ready.");
                 }
                 else
                 {
-                    Main.Warn("[PLP] LocoOwnership assembly not found – relying on other providers (PersistentLocos?)");
+                    // Silent in normal mode: only debug log once if enabled
+                    if (Main.Settings.enableLogging && !_loggedLoMissingOnce)
+                    {
+                        Main.Log("[PLP] LocoOwnership assembly not found – falling back to internal providers.");
+                        _loggedLoMissingOnce = true;
+                    }
                 }
 
-                // Fallback: PersistentLocos-API?
+                // Fallback: PersistentLocos internal providers (if any)
                 var asmTC = TrainCarT?.Assembly;
                 if (asmTC != null && _isOwned_TrainCar == null)
                 {
@@ -448,7 +458,8 @@ namespace PersistentLocos.Plus
                             {
                                 _isOwned_TrainCar = m;
                                 _isOwned_TrainCarTarget = null;
-                                Main.Log($"[PLP] Ownership resolver: {t.Name}.{name}(TrainCar)");
+                                if (Main.Settings.enableLogging)
+                                    Main.Log($"[PLP] Ownership resolver fallback: {t.Name}.{name}(TrainCar)");
                                 break;
                             }
                         }
@@ -458,7 +469,8 @@ namespace PersistentLocos.Plus
             }
             catch (Exception ex)
             {
-                Main.Warn("Ownership init error: " + ex);
+                if (Main.Settings.enableLogging)
+                    Main.Log("Ownership init error (non-fatal): " + ex);
             }
 
             _init = true;
@@ -518,11 +530,12 @@ namespace PersistentLocos.Plus
 
             try
             {
-                // Restoration / playerSpawned / unique -> owned
+                // Restoration / playerSpawned / unique => treat as owned
                 if (IsRestorationOrPlayerSpawned(trainCar))
                 {
                     owned = true;
-                    Main.Log("[PLP] Ownership: restoration/playerSpawned/unique -> treat as OWNED");
+                    if (Main.Settings.enableLogging)
+                        Main.Log("[PLP] Ownership: restoration/playerSpawned/unique -> OWNED");
                     return true;
                 }
 
@@ -534,7 +547,8 @@ namespace PersistentLocos.Plus
                         if (!b1 && IsRestorationOrPlayerSpawned(trainCar))
                         {
                             owned = true;
-                            Main.Log("[PLP] Ownership: LO=false but restoration/playerSpawned/unique -> OWNED");
+                            if (Main.Settings.enableLogging)
+                                Main.Log("[PLP] Ownership: LO=false but restoration/playerSpawned/unique -> OWNED");
                             return true;
                         }
                         owned = b1;
@@ -552,7 +566,8 @@ namespace PersistentLocos.Plus
                         if (!b2 && IsRestorationOrPlayerSpawned(trainCar))
                         {
                             owned = true;
-                            Main.Log("[PLP] Ownership: LO(false by guid) but restoration/playerSpawned/unique -> OWNED");
+                            if (Main.Settings.enableLogging)
+                                Main.Log("[PLP] Ownership: LO(false by guid) but restoration/playerSpawned/unique -> OWNED");
                             return true;
                         }
                         owned = b2;
@@ -575,7 +590,8 @@ namespace PersistentLocos.Plus
                 if (IsRestorationOrPlayerSpawned(trainCar))
                 {
                     owned = true;
-                    Main.Log("[PLP] Ownership: fallback restoration/playerSpawned/unique -> OWNED");
+                    if (Main.Settings.enableLogging)
+                        Main.Log("[PLP] Ownership: fallback restoration/playerSpawned/unique -> OWNED");
                     return true;
                 }
 
@@ -583,7 +599,8 @@ namespace PersistentLocos.Plus
             }
             catch (Exception ex)
             {
-                Main.Warn("TryIsOwned error: " + ex);
+                if (Main.Settings.enableLogging)
+                    Main.Log("TryIsOwned error (non-fatal): " + ex);
                 return false;
             }
         }
@@ -692,9 +709,9 @@ namespace PersistentLocos.Plus
         }
     }
 
-    // ============================================================
-    // C) Manueller Service: Multiplikator (UI + Kasse) – konsistent
-    // ============================================================
+    // ------------------------------------------------------------
+    // C) Manual service multiplier (UI + cash register), consistent
+    // ------------------------------------------------------------
 
     internal static class UiPriceState
     {
@@ -734,16 +751,18 @@ namespace PersistentLocos.Plus
 
                 var data = Helpers.GetCashRegisterData(__instance);
                 if (UiPriceState.IsBoosted(data)) return;
-
                 if (!shouldMult) return;
 
                 double mult = Math.Max(1d, (double)PersistentLocos.Main.Settings.serviceCostMultiplierForNonOwned);
                 __result *= mult;
-                PersistentLocos.Main.Log($"CashReg++ [Base.GetTotalPrice] x{mult} -> {__result}");
+
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log($"CashReg++ [Base.GetTotalPrice] x{mult} -> {__result}");
             }
             catch (Exception ex)
             {
-                PersistentLocos.Main.Warn("CashRegister Base GetTotalPrice patch error: " + ex.Message);
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("CashRegister Base GetTotalPrice patch error (non-fatal): " + ex.Message);
             }
         }
     }
@@ -773,7 +792,8 @@ namespace PersistentLocos.Plus
             }
 
             if (_targets.Count == 0) return false;
-            PersistentLocos.Main.Log($"CashRegister.GetTotalPrice override targets: {_targets.Count}");
+            if (PersistentLocos.Main.Settings.enableLogging)
+                PersistentLocos.Main.Log($"CashRegister.GetTotalPrice override targets: {_targets.Count}");
             return true;
         }
 
@@ -795,16 +815,18 @@ namespace PersistentLocos.Plus
 
                 var data = Helpers.GetCashRegisterData(__instance);
                 if (UiPriceState.IsBoosted(data)) return;
-
                 if (!shouldMult) return;
 
                 double mult = Math.Max(1d, (double)PersistentLocos.Main.Settings.serviceCostMultiplierForNonOwned);
                 __result *= mult;
-                PersistentLocos.Main.Log($"CashReg++ [{__originalMethod?.DeclaringType?.Name}.GetTotalPrice] x{mult} -> {__result}");
+
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log($"CashReg++ [{__originalMethod?.DeclaringType?.Name}.GetTotalPrice] x{mult} -> {__result}");
             }
             catch (Exception ex)
             {
-                PersistentLocos.Main.Warn("CashRegister Override GetTotalPrice patch error: " + ex.Message);
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("CashRegister Override GetTotalPrice patch error (non-fatal): " + ex.Message);
             }
         }
     }
@@ -828,7 +850,6 @@ namespace PersistentLocos.Plus
 
                 var data = Helpers.GetCashRegisterData(__instance);
                 if (UiPriceState.IsBoosted(data)) return;
-
                 if (!shouldMult) return;
 
                 float mult = Math.Max(1f, PersistentLocos.Main.Settings.serviceCostMultiplierForNonOwned);
@@ -842,11 +863,14 @@ namespace PersistentLocos.Plus
                     newList.Add(copy);
                 }
                 __result = newList;
-                PersistentLocos.Main.Log($"CashRegData++ [Base.GetAllNonZeroPurchaseData] x{mult} (prices adjusted)");
+
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log($"CashRegData++ [Base.GetAllNonZeroPurchaseData] x{mult} (prices adjusted)");
             }
             catch (Exception ex)
             {
-                PersistentLocos.Main.Warn("CashRegister Base GetAllNonZeroPurchaseData patch error: " + ex.Message);
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("CashRegister Base GetAllNonZeroPurchaseData patch error (non-fatal): " + ex.Message);
             }
         }
     }
@@ -875,7 +899,8 @@ namespace PersistentLocos.Plus
             }
 
             if (_targets.Count == 0) return false;
-            PersistentLocos.Main.Log($"CashRegister.GetAllNonZeroPurchaseData override targets: {_targets.Count}");
+            if (PersistentLocos.Main.Settings.enableLogging)
+                PersistentLocos.Main.Log($"CashRegister.GetAllNonZeroPurchaseData override targets: {_targets.Count}");
             return true;
         }
 
@@ -897,7 +922,6 @@ namespace PersistentLocos.Plus
 
                 var data = Helpers.GetCashRegisterData(__instance);
                 if (UiPriceState.IsBoosted(data)) return;
-
                 if (!shouldMult) return;
 
                 float mult = Math.Max(1f, PersistentLocos.Main.Settings.serviceCostMultiplierForNonOwned);
@@ -911,18 +935,21 @@ namespace PersistentLocos.Plus
                     newList.Add(copy);
                 }
                 __result = newList;
-                PersistentLocos.Main.Log($"CashRegData++ [{__originalMethod?.DeclaringType?.Name}.GetAllNonZeroPurchaseData] x{mult} (prices adjusted)");
+
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log($"CashRegData++ [{__originalMethod?.DeclaringType?.Name}.GetAllNonZeroPurchaseData] x{mult} (prices adjusted)");
             }
             catch (Exception ex)
             {
-                PersistentLocos.Main.Warn("CashRegister Override GetAllNonZeroPurchaseData patch error: " + ex.Message);
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("CashRegister Override GetAllNonZeroPurchaseData patch error (non-fatal): " + ex.Message);
             }
         }
     }
 
-    // ============================================================
-    // D) PitStop-UI: Preisschilder (pro Modul) anheben / zurücksetzen
-    // ============================================================
+    // ------------------------------------------------------------
+    // D) PitStop UI price label boost/reset per module
+    // ------------------------------------------------------------
     [HarmonyPatch]
     internal static class PitStop_UI_Prices_After_UpdateIndependent
     {
@@ -931,14 +958,13 @@ namespace PersistentLocos.Plus
         static bool Prepare()
         {
             var t = AccessTools.TypeByName("PitStopIndicators");
-            if (t == null) { PersistentLocos.Main.Warn("PitStopIndicators not found."); return false; }
+            if (t == null) { return false; }
 
             var trainCarT = AccessTools.TypeByName("TrainCar") ?? AccessTools.TypeByName("DV.TrainCar");
             _target = AccessTools.Method(t, "UpdateIndependentPrices", new[] { trainCarT })
                    ?? t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                        .FirstOrDefault(m => m.Name == "UpdateIndependentPrices");
-            if (_target == null) { PersistentLocos.Main.Warn("UpdateIndependentPrices not found."); return false; }
-            return true;
+            return _target != null;
         }
 
         [HarmonyTargetMethod] static MethodBase TargetMethod() => _target;
@@ -958,11 +984,7 @@ namespace PersistentLocos.Plus
         static bool Prepare()
         {
             var t = AccessTools.TypeByName("PitStopIndicators");
-            if (t == null)
-            {
-                PersistentLocos.Main.Warn("PitStopIndicators not found.");
-                return false;
-            }
+            if (t == null) return false;
 
             _targets.Clear();
             foreach (var m in t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -971,11 +993,7 @@ namespace PersistentLocos.Plus
                 if (m.GetParameters().Length >= 1) _targets.Add(m);
             }
 
-            if (_targets.Count == 0)
-            {
-                PersistentLocos.Main.Warn("No UpdatePricesDependingOnLocoType overload found — skipping.");
-                return false;
-            }
+            if (_targets.Count == 0) return false;
             return true;
         }
 
@@ -1050,18 +1068,20 @@ namespace PersistentLocos.Plus
                 }
 
                 Helpers.WriteModuleTextsFromData(__instance, data);
-                PersistentLocos.Main.Log("Per-unit text refresh via UpdateResourcePricePerUnit.");
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("Per-unit text refresh via UpdateResourcePricePerUnit.");
             }
             catch (Exception ex)
             {
-                PersistentLocos.Main.Warn("LocoResourceModule.UpdateResourcePricePerUnit patch error: " + ex.Message);
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("LocoResourceModule.UpdateResourcePricePerUnit patch error (non-fatal): " + ex.Message);
             }
         }
     }
 
-    // ============================================================
+    // ------------------------------------------------------------
     // E) Helpers
-    // ============================================================
+    // ------------------------------------------------------------
     internal sealed class ReferenceEqualityComparer : IEqualityComparer<object>
     {
         public static readonly ReferenceEqualityComparer Instance = new ReferenceEqualityComparer();
@@ -1096,12 +1116,12 @@ namespace PersistentLocos.Plus
             return false;
         }
 
-        // Car aus (CashRegisterModule oder LocoResourceModule) ermitteln
+        // Resolve car from CashRegisterModule or LocoResourceModule
         public static object ResolveCarFromCashRegister(object cashInstance)
         {
             if (cashInstance == null) return null;
 
-            // 1) Über Data.car
+            // 1) From Data.car
             try
             {
                 var data = GetCashRegisterData(cashInstance);
@@ -1211,7 +1231,7 @@ namespace PersistentLocos.Plus
             catch { return CultureInfo.InvariantCulture; }
         }
 
-        // zentraler UI-Boost / -Revert inkl. Text-Neuschreibung
+        // Apply/revert UI price boost and rewrite texts
         public static void ApplyUiPriceBoostForIndicators(object indicatorsInstance, object trainCar)
         {
             try
@@ -1260,19 +1280,21 @@ namespace PersistentLocos.Plus
                         }
                     }
 
-                    // Texte IMMER neu schreiben (per-unit + total)
+                    // Always rewrite per-unit and total texts from data
                     WriteModuleTextsFromData(mod, data);
                 }
 
-                PersistentLocos.Main.Log($"PitStop UI price {(shouldBoost ? "boost" : "normalize")} applied (with text refresh).");
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log($"PitStop UI price {(shouldBoost ? "boost" : "normalize")} applied (with text refresh).");
             }
             catch (Exception ex)
             {
-                PersistentLocos.Main.Warn("ApplyUiPriceBoostForIndicators error: " + ex.Message);
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("ApplyUiPriceBoostForIndicators error (non-fatal): " + ex.Message);
             }
         }
 
-        // Schreibt pricePerUnitText & totalPriceText auf Basis von Data.pricePerUnit/unitsToBuy
+        // Write pricePerUnitText & totalPriceText based on Data.pricePerUnit and unitsToBuy
         public static void WriteModuleTextsFromData(object module, object data)
         {
             try
@@ -1300,9 +1322,9 @@ namespace PersistentLocos.Plus
             catch { }
         }
 
-        // ==== Refresh-Hilfen, von LO-Postfixen nutzbar ====
+        // Refresh helpers (can be called after ownership changes)
 
-        // Refresh NUR für PitStopStationen, die genau dieses Car selektiert haben
+        // Refresh only PitStops that currently have this car selected
         public static void RefreshPitStopUiForCar(object trainCar)
         {
             try
@@ -1343,16 +1365,18 @@ namespace PersistentLocos.Plus
                     var dispLatest = AccessTools.Method(pstType, "DisplayLatestCarParamsReport", new[] { typeof(bool) });
                     dispLatest?.Invoke(st, new object[] { false });
 
-                    PersistentLocos.Main.Log("[PLP] PitStop UI refresh after ownership change (target car).");
+                    if (PersistentLocos.Main.Settings.enableLogging)
+                        PersistentLocos.Main.Log("[PLP] PitStop UI refresh after ownership change (target car).");
                 }
             }
             catch (Exception ex)
             {
-                PersistentLocos.Main.Warn("RefreshPitStopUiForCar error: " + ex);
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("RefreshPitStopUiForCar error (non-fatal): " + ex);
             }
         }
 
-        // Refresh für ALLE PitStops, die gerade ein Car selektiert haben (failsafe)
+        // Refresh for all PitStops that currently have a car selected (failsafe)
         public static void RefreshPitStopsForAllSelected()
         {
             try
@@ -1395,11 +1419,13 @@ namespace PersistentLocos.Plus
                     dispLatest?.Invoke(st, new object[] { false });
                 }
 
-                PersistentLocos.Main.Log("[PLP] PitStop UI refresh after ownership change (all selected).");
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("[PLP] PitStop UI refresh after ownership change (all selected).");
             }
             catch (Exception ex)
             {
-                PersistentLocos.Main.Warn("RefreshPitStopsForAllSelected error: " + ex);
+                if (PersistentLocos.Main.Settings.enableLogging)
+                    PersistentLocos.Main.Log("RefreshPitStopsForAllSelected error (non-fatal): " + ex);
             }
         }
     }
