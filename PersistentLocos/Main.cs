@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Collections;
 using HarmonyLib;
 using UnityEngine;
 using UnityModManagerNet;
@@ -11,6 +12,7 @@ namespace PersistentLocos
         public static UnityModManager.ModEntry Mod;
         public static Settings Settings;
         private static Harmony _harmony;
+		private static bool _warmUpStarted = false;
 
         public static bool Load(UnityModManager.ModEntry modEntry)
         {
@@ -92,7 +94,7 @@ namespace PersistentLocos
 
             if (Settings.enableUnownedServiceMultiplier)
             {
-                GUILayout.Space(10);
+                GUILayout.Space(5);
                 GUILayout.Label($"Service multiplier: {Settings.unownedServiceMultiplier:0.0}x");
                 GUILayout.Label($"(Increases Manual Service costs for locomotives you do not own — excluding demonstrators or those purchased via LocoOwnership Mod)");
                 float raw = GUILayout.HorizontalSlider(Settings.unownedServiceMultiplier, 1.0f, 5.0f, GUILayout.Width(480));
@@ -106,7 +108,23 @@ namespace PersistentLocos
                 Settings.serviceCostMultiplierForNonOwned = Settings.unownedServiceMultiplier;
             }
 
-            GUILayout.Space(5);
+            GUILayout.Space(10);
+			
+            // --- NEW: Repair Without License ---
+            Settings.enableRepairWithoutLicense = GUILayout.Toggle(
+                Settings.enableRepairWithoutLicense,
+                "Repair Without License"
+            );
+            if (Settings.enableRepairWithoutLicense)
+            {
+                GUILayout.Space(5);
+                GUILayout.Label($"Price multiplier (No Manual Service license): {Settings.repairWithoutLicenseMultiplier:0.0}x");
+                float raw2 = GUILayout.HorizontalSlider(Settings.repairWithoutLicenseMultiplier, 1.5f, 10.0f, GUILayout.Width(480));
+                float snapped2 = Mathf.Clamp((float)Math.Round(raw2 * 2f) / 2f, 1.5f, 10.0f);
+                Settings.repairWithoutLicenseMultiplier = snapped2;
+            }
+
+            GUILayout.Space(10);
             Settings.enableLogging = GUILayout.Toggle(Settings.enableLogging, "Enable debug logging");
         }
 
@@ -133,6 +151,12 @@ namespace PersistentLocos
         static float _timeSinceStart = 0f;
         static void OnUpdate(UnityModManager.ModEntry modEntry, float dt)
         {
+			if (!_warmUpStarted && Time.timeSinceLevelLoad > 2f)
+			{
+				_warmUpStarted = true;
+				CoroutineDispatcher.Instance.RunCoroutine(WarmUpCoroutine());
+			}
+			
             _timeSinceStart += dt;
             if (_timeSinceStart < 6f) return;
 
@@ -159,5 +183,28 @@ namespace PersistentLocos
         }
         public static void Warn(string msg) => Mod?.Logger.Warning("[PersistentLocos] " + msg);
         public static void Error(string msg) => Mod?.Logger.Error("[PersistentLocos] " + msg);
+		
+		private static IEnumerator WarmUpCoroutine()
+		{
+			yield return new WaitForSeconds(0.3f);
+
+			try
+			{
+				// Ownership initialisieren
+				PersistentLocos.Plus.Ownership.TryIsOwned(null, out _);
+
+				// Typen vorladen (Reflection-Cache)
+				AccessTools.TypeByName("PitStopStation");
+				AccessTools.TypeByName("PitStopIndicators");
+				AccessTools.TypeByName("CashRegisterModule");
+
+				// Lizenz-Checks vorbereiten
+				PersistentLocos.Plus.Helpers.HasManualServiceLicense();
+			}
+			catch { }
+
+			if (Settings.enableLogging)
+				Log("[PLP] Warm-Up completed");
+		}
     }
 }

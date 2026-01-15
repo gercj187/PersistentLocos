@@ -785,7 +785,7 @@ namespace PersistentLocos.Plus
 				PersistentLocos.Main.Log($"CashReg {__originalMethod?.DeclaringType?.Name}.GetTotalPrice -> {__result:0.00} (no extra scaling)");
 		}
 	}
-
+	/*
     [HarmonyPatch(typeof(CashRegisterModule), nameof(CashRegisterModule.GetAllNonZeroPurchaseData))]
 	internal static class CashRegister_Base_GetAllNonZeroPurchaseData_Patch
 	{
@@ -807,7 +807,7 @@ namespace PersistentLocos.Plus
 				{
 					if (d == null) continue;
 					var copy = new CashRegisterModule.CashRegisterModuleData(d, copyUnitsToBuy: true, copyPrice: true);
-					//copy.pricePerUnit *= mult;
+					copy.pricePerUnit *= mult;
 					newList.Add(copy);
 				}
 				__result = newList;
@@ -868,7 +868,7 @@ namespace PersistentLocos.Plus
 				{
 					if (d == null) continue;
 					var copy = new CashRegisterModule.CashRegisterModuleData(d, copyUnitsToBuy: true, copyPrice: true);
-					//copy.pricePerUnit *= mult;
+					copy.pricePerUnit *= mult;
 					newList.Add(copy);
 				}
 				__result = newList;
@@ -883,6 +883,7 @@ namespace PersistentLocos.Plus
 			}
 		}
 	}
+	*/
 
     // ------------------------------------------------------------
     // D) PitStop UI price label boost/reset per module
@@ -970,49 +971,19 @@ namespace PersistentLocos.Plus
 		{
 			try
 			{
-				// Reentry guard: wenn wir selbst gerade UI neu schreiben, hier aussteigen
-				var inRewriteField = typeof(Helpers).GetField("_inUiRewrite", BindingFlags.NonPublic | BindingFlags.Static);
-				if (inRewriteField != null && (bool)(inRewriteField.GetValue(null) ?? false))
-					return;
-
 				var car = Helpers.ResolveCarFromCashRegister(__instance);
 				if (car == null || !Helpers.IsLocomotive(car)) return;
 
 				var data = Helpers.GetCashRegisterData(__instance);
 				if (data == null) return;
 
-				var ppuField = AccessTools.Field(data.GetType(), "pricePerUnit");
-				if (ppuField == null) return;
-
-				float currentPpu = (float)ppuField.GetValue(data);
-				float mult = (float)Helpers.GetEffectiveServiceMultiplier(car);
-
-				if (mult > 1f)
-				{
-					if (!UiPriceState.TryGetOriginal(data, out var original))
-					{
-						UiPriceState.MarkBoosted(data, currentPpu);
-						original = currentPpu;
-					}
-					ppuField.SetValue(data, original * mult);
-				}
-				else
-				{
-					if (UiPriceState.TryGetOriginal(data, out var original))
-					{
-						ppuField.SetValue(data, original);
-						UiPriceState.Clear(data);
-					}
-				}
-
-				Helpers.WriteModuleTextsFromData(__instance, data);
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("Per-unit text refresh via UpdateResourcePricePerUnit (guarded).");
+				// UI-Update erfolgt ausschließlich über ApplyUiPriceBoostForIndicators
+				// KEIN eigener Rewrite hier!
 			}
 			catch (Exception ex)
 			{
 				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("LocoResourceModule.UpdateResourcePricePerUnit patch error (non-fatal): " + ex.Message);
+					PersistentLocos.Main.Log("LocoResourceModule.UpdateResourcePricePerUnit patch error: " + ex.Message);
 			}
 		}
 	}
@@ -1507,4 +1478,105 @@ namespace PersistentLocos.Plus
             }
         }
     }
+	// ------------------------------------------------------------
+	// F) Invoice – prevent double multiplier
+	// ------------------------------------------------------------
+	[HarmonyPatch]
+	internal static class Invoice_CalculateTotal_NoDoubleMultiplier
+	{
+		private static MethodBase _target;
+
+		static bool Prepare()
+		{
+			// Zielmethode finden (versionssicher)
+			var invoiceT =
+				AccessTools.TypeByName("DV.Booklets.Invoice")
+				?? AccessTools.TypeByName("Invoice");
+
+			if (invoiceT == null) return false;
+
+			_target =
+				AccessTools.Method(invoiceT, "CalculateTotal")
+				?? AccessTools.Method(invoiceT, "RecalculateTotal")
+				?? AccessTools.Method(invoiceT, "UpdateTotal");
+
+			return _target != null;
+		}
+
+		[HarmonyTargetMethod]
+		static MethodBase TargetMethod() => _target;
+
+		[HarmonyPrefix]
+		static void Prefix(object __instance)
+		{
+			try
+			{
+				// Lines / entries der Rechnung holen
+				var linesField =
+					AccessTools.Field(__instance.GetType(), "lines")
+					?? AccessTools.Field(__instance.GetType(), "entries");
+
+				if (linesField == null) return;
+
+				var lines = linesField.GetValue(__instance) as IEnumerable;
+				if (lines == null) return;
+
+				foreach (var line in lines)
+				{
+					if (line == null) continue;
+
+					// Datenobjekt der Line
+					var dataField =
+						AccessTools.Field(line.GetType(), "data")
+						?? AccessTools.Field(line.GetType(), "moduleData");
+
+					var data = dataField?.GetValue(line);
+					if (data == null) continue;
+
+					// Wenn wir einen originalen Preis kennen → für Invoice normalisieren
+					if (UiPriceState.TryGetOriginal(data, out var original))
+					{
+						var ppuField = AccessTools.Field(data.GetType(), "pricePerUnit");
+						if (ppuField != null && ppuField.FieldType == typeof(float))
+						{
+							ppuField.SetValue(data, original);
+						}
+					}
+				}
+
+				if (PersistentLocos.Main.Settings.enableLogging)
+					PersistentLocos.Main.Log("[PLP] Invoice normalized (no double multiplier).");
+			}
+			catch (Exception ex)
+			{
+				if (PersistentLocos.Main.Settings.enableLogging)
+					PersistentLocos.Main.Log("Invoice normalization error (non-fatal): " + ex.Message);
+			}
+		}
+	}
+	// ------------------------------------------------------------
+	// E) CashRegister – apply service multiplier ONLY to total price
+	// ------------------------------------------------------------
+	[HarmonyPatch(typeof(CashRegisterModule), nameof(CashRegisterModule.GetTotalPrice))]
+	internal static class CashRegister_GetTotalPrice_WithMultiplier
+	{
+		[HarmonyPostfix]
+		static void Postfix(CashRegisterModule __instance, ref double __result)
+		{
+			var car = Helpers.ResolveCarFromCashRegister(__instance);
+			if (car == null || !Helpers.IsLocomotive(car))
+				return;
+
+			double mult = Helpers.GetEffectiveServiceMultiplier(car);
+			if (mult <= 1d)
+				return;
+
+			__result *= mult;
+
+			if (PersistentLocos.Main.Settings.enableLogging)
+				PersistentLocos.Main.Log(
+					$"[PersistentLocos] GetTotalPrice multiplied by {mult:0.##}"
+				);
+		}
+	}
 }
