@@ -13,11 +13,14 @@ namespace PersistentLocos
         public static Settings Settings;
         private static Harmony _harmony;
 		private static bool _warmUpStarted = false;
+		private static bool _runtimeRepairWithoutLicense;
 
         public static bool Load(UnityModManager.ModEntry modEntry)
         {
             Mod = modEntry;
             Settings = UnityModManager.ModSettings.Load<Settings>(modEntry) ?? new Settings();
+			
+			_runtimeRepairWithoutLicense  = Settings.enableRepairWithoutLicense;
 
             modEntry.OnToggle = OnToggle;
             modEntry.OnGUI = OnGUI;
@@ -27,6 +30,13 @@ namespace PersistentLocos
             _harmony = new Harmony("com.chris.persistentlocos");
             return true;
         }
+		
+		private static bool RestartRequired()
+		{
+			return
+			  Settings.enableRepairWithoutLicense != _runtimeRepairWithoutLicense;
+		}
+
 
         static bool OnToggle(UnityModManager.ModEntry modEntry, bool enabled)
         {
@@ -62,35 +72,11 @@ namespace PersistentLocos
 
             GUILayout.Space(5);
 
-            // --- BEGIN: Sync persistent damage <-> blockLocomotiveFees ---
-            bool prevPersistent = Settings.enablePersistentDamage;
-            Settings.enablePersistentDamage = GUILayout.Toggle(Settings.enablePersistentDamage, "Enable persistent damage");
-            GUILayout.Label("(Removes all locomotives from fees and from automatic maintenance)");
-
-            if (Settings.enablePersistentDamage != prevPersistent)
-            {
-                // Wenn persistenter Schaden an ist, blocken wir loco fees; wenn aus, geben wir sie wieder frei.
-                Settings.blockLocomotiveFees = Settings.enablePersistentDamage;
-                Log($"Persistent damage {(Settings.enablePersistentDamage ? "enabled" : "disabled")} -> blockLocomotiveFees = {Settings.blockLocomotiveFees}");
-
-                // UI sofort aktualisieren, damit Preise/Fees in der PitStop-UI korrekt sind
-                try
-                {
-                    PersistentLocos.Plus.Helpers.RefreshPitStopsForAllSelected();
-                }
-                catch (Exception ex)
-                {
-                    Warn("PitStop UI refresh after toggle failed: " + ex.Message);
-                }
-            }
-            // --- END: Sync persistent damage <-> blockLocomotiveFees ---
+			Settings.enablePersistentDamage = GUILayout.Toggle(Settings.enablePersistentDamage,"Enable persistent damage");
+			GUILayout.Label("(Removes all locomotives from fees and from automatic maintenance)");
 
             GUILayout.Space(10);
-            bool wasEnabled = Settings.enableUnownedServiceMultiplier;
-            Settings.enableUnownedServiceMultiplier = GUILayout.Toggle(
-                Settings.enableUnownedServiceMultiplier,
-                "Apply service multiplier to unowned locomotives"
-            );
+            Settings.enableUnownedServiceMultiplier = GUILayout.Toggle(Settings.enableUnownedServiceMultiplier,"Apply service multiplier to unowned locomotives");
 
             if (Settings.enableUnownedServiceMultiplier)
             {
@@ -100,29 +86,40 @@ namespace PersistentLocos
                 float raw = GUILayout.HorizontalSlider(Settings.unownedServiceMultiplier, 1.0f, 5.0f, GUILayout.Width(480));
                 float snapped = Mathf.Clamp((float)Math.Round(raw * 2f) / 2f, 1.0f, 5.0f);
                 Settings.unownedServiceMultiplier = snapped;
-
-                Settings.serviceCostMultiplierForNonOwned = Settings.unownedServiceMultiplier;
-            }
-            else if (wasEnabled)
-            {
-                Settings.serviceCostMultiplierForNonOwned = Settings.unownedServiceMultiplier;
             }
 
             GUILayout.Space(10);
 			
-            // --- NEW: Repair Without License ---
-            Settings.enableRepairWithoutLicense = GUILayout.Toggle(
-                Settings.enableRepairWithoutLicense,
-                "Repair Without License"
-            );
-            if (Settings.enableRepairWithoutLicense)
-            {
-                GUILayout.Space(5);
-                GUILayout.Label($"Price multiplier (No Manual Service license): {Settings.repairWithoutLicenseMultiplier:0.0}x");
-                float raw2 = GUILayout.HorizontalSlider(Settings.repairWithoutLicenseMultiplier, 1.5f, 10.0f, GUILayout.Width(480));
-                float snapped2 = Mathf.Clamp((float)Math.Round(raw2 * 2f) / 2f, 1.5f, 10.0f);
-                Settings.repairWithoutLicenseMultiplier = snapped2;
-            }
+			Settings.enableRepairWithoutLicense = GUILayout.Toggle(Settings.enableRepairWithoutLicense,"Repair Without License");
+
+			if (Settings.enableRepairWithoutLicense)
+			{
+				GUILayout.Space(5);
+				GUILayout.Label($"Price multiplier (No Manual Service license): {Settings.repairWithoutLicenseMultiplier:0.0}x");
+				float raw2 = GUILayout.HorizontalSlider(Settings.repairWithoutLicenseMultiplier,1.5f,10.0f,GUILayout.Width(480));
+				float snapped2 = Mathf.Clamp((float)Math.Round(raw2 * 2f) / 2f,1.5f,10.0f);
+				Settings.repairWithoutLicenseMultiplier = snapped2;
+			}
+			
+			if (RestartRequired())
+			{
+				GUILayout.Space(10);
+
+				var oldColor = GUI.backgroundColor;
+				GUI.backgroundColor = new Color(1.5f, 0.05f, 0.05f);
+
+				GUIStyle restartStyle = new GUIStyle(GUI.skin.button);
+				restartStyle.fontSize = 14;
+				restartStyle.alignment = TextAnchor.MiddleCenter;
+				restartStyle.fontStyle = FontStyle.Bold;
+				restartStyle.normal.textColor = Color.white;
+				restartStyle.hover.textColor  = Color.white;
+				restartStyle.active.textColor = Color.white;
+
+				GUILayout.Button("PLEASE RESTART DERAIL VALLEY!",restartStyle,GUILayout.Height(32),GUILayout.Width(480));
+
+				GUI.backgroundColor = oldColor;
+			}
 
             GUILayout.Space(10);
             Settings.enableLogging = GUILayout.Toggle(Settings.enableLogging, "Enable debug logging");
@@ -130,24 +127,10 @@ namespace PersistentLocos
 
         static void OnSaveGUI(UnityModManager.ModEntry modEntry)
         {
-            try
-            {
-                // Alias sicher synchronisieren
-                Settings.serviceCostMultiplierForNonOwned = Settings.unownedServiceMultiplier;
-
-                // Safety: blockLocomotiveFees folgt immer persistentDamage
-                Settings.blockLocomotiveFees = Settings.enablePersistentDamage;
-
-                Settings.Save(modEntry);
-                Log("Settings saved.");
-            }
-            catch (Exception ex)
-            {
-                Error("Settings save failed: " + ex);
-            }
+			Settings.Save(modEntry);
+			Log("Settings saved.");
         }
 
-        // Optional: einmalige LO-Override-Initialisierung nach Start
         static float _timeSinceStart = 0f;
         static void OnUpdate(UnityModManager.ModEntry modEntry, float dt)
         {
@@ -173,7 +156,7 @@ namespace PersistentLocos
                 }
             }
             catch { }
-            _timeSinceStart = float.MaxValue; // nur einmal
+            _timeSinceStart = float.MaxValue;
         }
 
         public static void Log(string msg)
@@ -181,8 +164,8 @@ namespace PersistentLocos
             if (Settings != null && !Settings.enableLogging) return;
             Mod?.Logger.Log("[PersistentLocos] " + msg);
         }
-        public static void Warn(string msg) => Mod?.Logger.Warning("[PersistentLocos] " + msg);
-        public static void Error(string msg) => Mod?.Logger.Error("[PersistentLocos] " + msg);
+        public static void Warn(string msg) => Mod?.Logger.Warning("[Warning] " + msg);
+        public static void Error(string msg) => Mod?.Logger.Error("[ERROR] " + msg);
 		
 		private static IEnumerator WarmUpCoroutine()
 		{
@@ -190,21 +173,18 @@ namespace PersistentLocos
 
 			try
 			{
-				// Ownership initialisieren
 				PersistentLocos.Plus.Ownership.TryIsOwned(null, out _);
 
-				// Typen vorladen (Reflection-Cache)
 				AccessTools.TypeByName("PitStopStation");
 				AccessTools.TypeByName("PitStopIndicators");
 				AccessTools.TypeByName("CashRegisterModule");
 
-				// Lizenz-Checks vorbereiten
 				PersistentLocos.Plus.Helpers.HasManualServiceLicense();
 			}
 			catch { }
 
 			if (Settings.enableLogging)
-				Log("[PLP] Warm-Up completed");
+				Log("Warm-Up completed");
 		}
     }
 }

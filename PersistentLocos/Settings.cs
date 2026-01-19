@@ -9,20 +9,21 @@ namespace PersistentLocos
         public int LocoLimit = 31;
 
         public bool enablePersistentDamage = true;
-
-        public bool blockLocomotiveFees = true;
+        
         public bool assumeNonOwnedWhenUnknown = true;
-        public bool overrideLocoOwnershipFees = true;
 
+        // --- Unowned multiplier ---
         public bool enableUnownedServiceMultiplier = true;
-        public float unownedServiceMultiplier = 2.0f;
-        public float serviceCostMultiplierForNonOwned = 2.0f;
+        public float unownedServiceMultiplier = 1.5f;
+
+        // --- Repair Without License ---
+        public bool enableRepairWithoutLicense = true;
+        public float repairWithoutLicenseMultiplier = 2.0f;
 
         public bool enableLogging = false;
 
         public override void Save(UnityModManager.ModEntry modEntry)
         {
-            serviceCostMultiplierForNonOwned = unownedServiceMultiplier;
             Save(this, modEntry);
         }
     }

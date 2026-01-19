@@ -9,6 +9,7 @@ using DV.ThingTypes.TransitionHelpers;
 using DV.ThingTypes;
 using DV.UserManagement;
 using DV.Utils;
+using DV.ServicePenalty;
 using DV;
 using HarmonyLib;
 using System.Collections.Generic;
@@ -19,6 +20,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System;
+using TMPro;
 using UnityEngine.SceneManagement;
 using UnityEngine;
 using UnityModManagerNet;
@@ -159,16 +161,14 @@ namespace PersistentLocos
             var spawners = GameObject.FindObjectsOfType<StationLocoSpawner>();
             foreach (var spawner in spawners)
             {
-                // temporarily increase to spawn across the map after load
-                spawner.spawnLocoPlayerSqrDistanceFromTrack = 625000000f; // 25 km^2
+                spawner.spawnLocoPlayerSqrDistanceFromTrack = 625000000f;
             }
 
             yield return new WaitForSeconds(5f);
 
             foreach (var spawner in spawners)
             {
-                // restore normal distance
-                spawner.spawnLocoPlayerSqrDistanceFromTrack = 25000000f; // 5 km^2
+                spawner.spawnLocoPlayerSqrDistanceFromTrack = 25000000f;
             }
         }
     }
@@ -190,11 +190,7 @@ namespace PersistentLocos
             }
         }
     }
-}
-
-namespace PersistentLocos
-{
-    // Simple coroutine host
+	
     public class CoroutineDispatcher : MonoBehaviour
     {
         private static CoroutineDispatcher _instance;
@@ -219,7 +215,6 @@ namespace PersistentLocos
         }
     }
 
-    // Save/load for loco spawn state and limit
     public static class LocoSpawnState
     {
         private static int _count = 0;
@@ -265,49 +260,120 @@ namespace PersistentLocos
     }
 }
 
-// ===================== PersistentLocosPlus =====================
-
 namespace PersistentLocos.Plus
 {
-    [HarmonyPatch(typeof(PitStop), "Awake")]
-	internal static class PitStop_AlwaysAllowManualService_Patch
+	[HarmonyPatch(typeof(LocoDebtController), nameof(LocoDebtController.RegisterLocoDebtTracker))]
+	internal static class LocoDebtController_RegisterLocoDebtTracker_BlockWhenPersistentDamage
 	{
-		static void Postfix(object __instance)
+		[HarmonyPrefix]
+		private static bool Prefix(LocoDebtController __instance, TrainCar car, LocoDebtTrackerBase locoDebtTracker)
 		{
+			if (!PersistentLocos.Main.Settings.enablePersistentDamage)
+				return true;
 			try
 			{
-				if (!PersistentLocos.Main.Settings.enableRepairWithoutLicense) return;
-
-				var acquiredField = AccessTools.Field(__instance.GetType(), "isManualServiceLicenseAcquired");
-				if (acquiredField != null) acquiredField.SetValue(__instance, true);
-
-				var textField = AccessTools.Field(__instance.GetType(), "manualServiceText");
-				var textObj = textField?.GetValue(__instance);
-				if (textObj != null)
-				{
-					var textProp = AccessTools.Property(textObj.GetType(), "text");
-					if (textProp != null && textProp.CanWrite)
-					{
-						var titleProp = AccessTools.Property(__instance.GetType(), "MANUAL_SERVICE_TITLE");
-						var title = titleProp?.GetValue(__instance) as string ?? "Ready for service";
-						textProp.SetValue(textObj, title);
-					}
-				}
-
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("[PLP] PitStop license bypass active.");
+				locoDebtTracker?.TurnOffDebtSources();
 			}
-			catch (Exception ex)
-			{
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("PitStop_AlwaysAllowManualService_Patch error: " + ex);
-			}
+			catch { }
+
+			if (PersistentLocos.Main.Settings.enableLogging)
+				PersistentLocos.Main.Log("LocoDebtController.RegisterLocoDebtTracker blocked (persistent damage).");
+
+			return false;
 		}
 	}
+	
+	[HarmonyPatch(typeof(LocoDebtController), nameof(LocoDebtController.StageLocoDebtOnLocoDestroy))]
+	internal static class LocoDebtController_StageOnDestroy_BlockWhenPersistentDamage
+	{
+		[HarmonyPrefix]
+		private static bool Prefix(LocoDebtController __instance, LocoDebtTrackerBase locoDebtTrackerToStage)
+		{
+			if (!PersistentLocos.Main.Settings.enablePersistentDamage)
+				return true;
 
-    // ------------------------------------------------------------
-    // A) Neutralize locomotive fees (loco/tender only)
-    // ------------------------------------------------------------
+			try
+			{
+				int idx = __instance.trackedLocosDebts.FindIndex(d => d.locoDebtTracker == locoDebtTrackerToStage);
+				if (idx != -1)
+				{
+					var existing = __instance.trackedLocosDebts[idx];
+					__instance.trackedLocosDebts.RemoveAt(idx);
+
+					SingletonBehaviour<CareerManagerDebtController>.Instance.UnregisterDebt(existing);
+
+					existing.UpdateDebtState();
+				}
+
+				locoDebtTrackerToStage?.TurnOffDebtSources();
+			}
+			catch { }
+
+			if (PersistentLocos.Main.Settings.enableLogging)
+				PersistentLocos.Main.Log("LocoDebtController.StageLocoDebtOnLocoDestroy blocked (persistent damage).");
+
+			return false;
+		}
+	}
+	
+	[HarmonyPatch(typeof(LocoDebtController), nameof(LocoDebtController.LoadDestroyedLocosDebtsSaveData))]
+	internal static class LocoDebtController_LoadDestroyedDebts_ClearWhenPersistentDamage
+	{
+		[HarmonyPostfix]
+		private static void Postfix(LocoDebtController __instance)
+		{
+			if (!PersistentLocos.Main.Settings.enablePersistentDamage)
+				return;
+
+			try
+			{
+				__instance.ClearLocoDebts();
+			}
+			catch { }
+
+			if (PersistentLocos.Main.Settings.enableLogging)
+				PersistentLocos.Main.Log("Cleared staged loco debts from save (persistent damage).");
+		}
+	}
+	
+    [HarmonyPatch]
+    internal static class LocoOwnership_IsDebtClearForBuy_Override
+    {
+        private static MethodBase _target;
+
+        static bool Prepare()
+        {
+            var debtHandlingType = AccessTools.TypeByName(
+                "LocoOwnership.OwnershipHandler.DebtHandling"
+            );
+
+            if (debtHandlingType == null)
+            {
+                PersistentLocos.Main.Log("DebtHandling type not found (LocoOwnership not installed?)");
+                return false;
+            }
+
+            _target = AccessTools.Method(debtHandlingType, "IsDebtClearForBuy");
+
+            return _target != null;
+        }
+
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() => _target;
+
+        [HarmonyPrefix]
+        static bool Prefix(ref bool __result)
+        {
+            if (PersistentLocos.Main.Settings.enablePersistentDamage)
+            {
+                __result = true;
+                return false;
+            }
+
+            return true;
+        }
+    }
+
     [HarmonyPatch]
     internal static class LocoDebt_GetTotalPrice_Overrides
     {
@@ -350,79 +416,24 @@ namespace PersistentLocos.Plus
         }
 
         [HarmonyTargetMethods] static IEnumerable<MethodBase> TargetMethods() => _targets;
-
         [HarmonyPrefix]
-        static bool Prefix(ref float __result)
-        {
-            if (!PersistentLocos.Main.Settings.blockLocomotiveFees) return true;
-            __result = 0f;
-            return false;
-        }
+		static bool Prefix(ref float __result)
+		{
+			if (!PersistentLocos.Main.Settings.enablePersistentDamage)
+				return true;
+			__result = 0f;
+			return false;
+		}
     }
 
-    [HarmonyPatch]
-    internal static class LocoDebt_IsPayable_Overrides
-    {
-        private static readonly List<MethodBase> _targets = new();
-        private static bool _notifiedOnce;
-
-        static bool Prepare()
-        {
-            _targets.Clear();
-            var baseT = AccessTools.TypeByName("DV.ServicePenalty.DisplayableDebt");
-            if (baseT == null) return false;
-
-            var asm = baseT.Assembly;
-            foreach (var t in asm.GetTypes())
-            {
-                if (t == null || t == baseT) continue;
-                if (!baseT.IsAssignableFrom(t)) continue;
-
-                var n = (t.FullName ?? t.Name).ToLowerInvariant();
-                if (!(n.Contains("loco") || n.Contains("tender"))) continue;
-
-                var getter = AccessTools.PropertyGetter(t, "IsPayable");
-                if (getter == null || getter.IsAbstract) continue;
-                if (getter.DeclaringType == t) _targets.Add(getter);
-            }
-
-            if (_targets.Count == 0)
-            {
-                if (PersistentLocos.Main.Settings.enableLogging && !_notifiedOnce)
-                {
-                    PersistentLocos.Main.Log("LocoDebt_IsPayable_Overrides: no targets (OK for this build).");
-                    _notifiedOnce = true;
-                }
-                return false;
-            }
-
-            if (PersistentLocos.Main.Settings.enableLogging)
-                PersistentLocos.Main.Log("Neutralizing IsPayable for " + _targets.Count + " loco-debt override(s).");
-            return true;
-        }
-
-        [HarmonyTargetMethods] static IEnumerable<MethodBase> TargetMethods() => _targets;
-
-        [HarmonyPrefix]
-        static bool Prefix(ref bool __result)
-        {
-            if (!PersistentLocos.Main.Settings.blockLocomotiveFees) return true;
-            __result = false;
-            return false;
-        }
-    }
-
-    // ------------------------------------------------------------
-    // B) Ownership resolver (restoration/playerSpawned/unique => owned)
-    // ------------------------------------------------------------
     internal static class Ownership
     {
         private static bool _init;
         private static Assembly _loAsm;
 
-        private static MethodInfo _isOwned_TrainCar; // bool IsOwned(TrainCar)
-        private static object     _isOwned_TrainCarTarget; // instance if non-static
-        private static MethodInfo _isOwned_Guid;     // bool IsOwned(string)
+        private static MethodInfo _isOwned_TrainCar;
+        private static object     _isOwned_TrainCarTarget;
+        private static MethodInfo _isOwned_Guid; 
         private static object     _isOwned_GuidTarget;
 
         private static readonly List<MemberInfo> _ownedGuidCollections = new();
@@ -464,18 +475,16 @@ namespace PersistentLocos.Plus
                     }
 
                     if (Main.Settings.enableLogging)
-                        Main.Log("[PLP] LO ownership resolver ready.");
+                        Main.Log("LocoOwnership ready.");
                 }
                 else
                 {
                     if (Main.Settings.enableLogging && !_loggedLoMissingOnce)
                     {
-                        Main.Log("[PLP] LocoOwnership assembly not found – falling back to internal providers.");
+                        Main.Log("LocoOwnership assembly not found – falling back to internal providers.");
                         _loggedLoMissingOnce = true;
                     }
                 }
-
-                // Fallbacks in eigener Assembly möglich (keine benötigt)
             }
             catch (Exception ex)
             {
@@ -541,7 +550,7 @@ namespace PersistentLocos.Plus
                 {
                     owned = true;
                     if (Main.Settings.enableLogging)
-                        Main.Log("[PLP] Ownership: restoration/playerSpawned/unique -> OWNED");
+                        Main.Log("Ownership: restoration/playerSpawned/unique -> OWNED");
                     return true;
                 }
 
@@ -554,7 +563,7 @@ namespace PersistentLocos.Plus
                         {
                             owned = true;
                             if (Main.Settings.enableLogging)
-                                Main.Log("[PLP] Ownership: LO=false but restoration/playerSpawned/unique -> OWNED");
+                                Main.Log("Ownership: LocoOwnership=false but restoration/playerSpawned/unique -> OWNED");
                             return true;
                         }
                         owned = b1;
@@ -573,7 +582,7 @@ namespace PersistentLocos.Plus
                         {
                             owned = true;
                             if (Main.Settings.enableLogging)
-                                Main.Log("[PLP] Ownership: LO(false by guid) but restoration/playerSpawned/unique -> OWNED");
+                                Main.Log("Ownership: LocoOwnership(false by guid) but restoration/playerSpawned/unique -> OWNED");
                             return true;
                         }
                         owned = b2;
@@ -597,7 +606,7 @@ namespace PersistentLocos.Plus
                 {
                     owned = true;
                     if (Main.Settings.enableLogging)
-                        Main.Log("[PLP] Ownership: fallback restoration/playerSpawned/unique -> OWNED");
+                        Main.Log("Ownership: fallback restoration/playerSpawned/unique -> OWNED");
                     return true;
                 }
 
@@ -715,10 +724,6 @@ namespace PersistentLocos.Plus
         }
     }
 
-    // ------------------------------------------------------------
-    // C) Service-Multiplikatoren (Unowned + No-License)
-    // ------------------------------------------------------------
-
     internal static class UiPriceState
     {
         private static readonly Dictionary<object, float> _originalPerUnit = new Dictionary<object, float>(ReferenceEqualityComparer.Instance);
@@ -738,156 +743,6 @@ namespace PersistentLocos.Plus
         }
     }
 
-    [HarmonyPatch(typeof(CashRegisterModule), nameof(CashRegisterModule.GetTotalPrice))]
-	internal static class CashRegister_Base_GetTotalPrice_Patch
-	{
-		[HarmonyPostfix]
-		static void Postfix(CashRegisterModule __instance, ref double __result)
-		{
-			// IMPORTANT: no extra multiplier here – prices are already scaled at data level.
-			if (PersistentLocos.Main.Settings.enableLogging)
-				PersistentLocos.Main.Log($"CashReg Base.GetTotalPrice -> {__result:0.00} (no extra scaling)");
-		}
-	}
-
-	[HarmonyPatch]
-	internal static class CashRegister_AllOverrides_GetTotalPrice_Patch
-	{
-		private static readonly List<MethodBase> _targets = new();
-
-		static bool Prepare()
-		{
-			_targets.Clear();
-			var baseCashT = AccessTools.TypeByName("CashRegisterModule");
-			if (baseCashT == null) return false;
-			var asm = baseCashT.Assembly;
-
-			foreach (var t in asm.GetTypes())
-			{
-				if (t == null) continue;
-				if (!baseCashT.IsAssignableFrom(t)) continue;
-
-				var m = AccessTools.Method(t, "GetTotalPrice", Type.EmptyTypes);
-				if (m == null || m.IsAbstract) continue;
-				if (m is MethodInfo mi && mi.ReturnType != typeof(double)) continue;
-				if (m.DeclaringType == t) _targets.Add(m);
-			}
-			return _targets.Count > 0;
-		}
-
-		[HarmonyTargetMethods] static IEnumerable<MethodBase> TargetMethods() => _targets;
-
-		[HarmonyPostfix]
-		static void Postfix(object __instance, ref double __result, MethodBase __originalMethod)
-		{
-			// IMPORTANT: no extra multiplier here – prices are already scaled at data level.
-			if (PersistentLocos.Main.Settings.enableLogging)
-				PersistentLocos.Main.Log($"CashReg {__originalMethod?.DeclaringType?.Name}.GetTotalPrice -> {__result:0.00} (no extra scaling)");
-		}
-	}
-	/*
-    [HarmonyPatch(typeof(CashRegisterModule), nameof(CashRegisterModule.GetAllNonZeroPurchaseData))]
-	internal static class CashRegister_Base_GetAllNonZeroPurchaseData_Patch
-	{
-		[HarmonyPostfix]
-		static void Postfix(CashRegisterModule __instance, ref IReadOnlyList<CashRegisterModule.CashRegisterModuleData> __result)
-		{
-			try
-			{
-				if (__result == null || __result.Count == 0) return;
-
-				var car = Helpers.ResolveCarFromCashRegister(__instance);
-				if (car == null || !Helpers.IsLocomotive(car)) return;
-
-				float mult = (float)Helpers.GetEffectiveServiceMultiplier(car);
-				if (mult <= 1f) return;
-
-				var newList = new List<CashRegisterModule.CashRegisterModuleData>(__result.Count);
-				foreach (var d in __result)
-				{
-					if (d == null) continue;
-					var copy = new CashRegisterModule.CashRegisterModuleData(d, copyUnitsToBuy: true, copyPrice: true);
-					copy.pricePerUnit *= mult;
-					newList.Add(copy);
-				}
-				__result = newList;
-
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log($"CashRegData++ [Base.GetAllNonZeroPurchaseData] x{mult} (prices adjusted once)");
-			}
-			catch (Exception ex)
-			{
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("CashRegister Base GetAllNonZeroPurchaseData patch error: " + ex.Message);
-			}
-		}
-	}
-
-	[HarmonyPatch]
-	internal static class CashRegister_AllOverrides_GetAllNonZeroPurchaseData_Patch
-	{
-		private static readonly List<MethodBase> _targets = new();
-
-		static bool Prepare()
-		{
-			_targets.Clear();
-
-			var baseCashT = AccessTools.TypeByName("CashRegisterModule");
-			if (baseCashT == null) return false;
-			var asm = baseCashT.Assembly;
-
-			foreach (var t in asm.GetTypes())
-			{
-				if (t == null) continue;
-				if (!baseCashT.IsAssignableFrom(t)) continue;
-
-				var m = AccessTools.Method(t, "GetAllNonZeroPurchaseData", Type.EmptyTypes);
-				if (m == null || m.IsAbstract) continue;
-				if (m.DeclaringType == t) _targets.Add(m);
-			}
-			return _targets.Count > 0;
-		}
-
-		[HarmonyTargetMethods] static IEnumerable<MethodBase> TargetMethods() => _targets;
-
-		[HarmonyPostfix]
-		static void Postfix(object __instance, ref IReadOnlyList<CashRegisterModule.CashRegisterModuleData> __result, MethodBase __originalMethod)
-		{
-			try
-			{
-				if (__result == null || __result.Count == 0) return;
-
-				var car = PersistentLocos.Plus.Helpers.ResolveCarFromCashRegister(__instance);
-				if (car == null || !PersistentLocos.Plus.Helpers.IsLocomotive(car)) return;
-
-				float mult = (float)PersistentLocos.Plus.Helpers.GetEffectiveServiceMultiplier(car);
-				if (mult <= 1f) return;
-
-				var newList = new List<CashRegisterModule.CashRegisterModuleData>(__result.Count);
-				foreach (var d in __result)
-				{
-					if (d == null) continue;
-					var copy = new CashRegisterModule.CashRegisterModuleData(d, copyUnitsToBuy: true, copyPrice: true);
-					copy.pricePerUnit *= mult;
-					newList.Add(copy);
-				}
-				__result = newList;
-
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log($"CashRegData++ [{__originalMethod?.DeclaringType?.Name}.GetAllNonZeroPurchaseData] x{mult} (prices adjusted once)");
-			}
-			catch (Exception ex)
-			{
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("CashRegister Override GetAllNonZeroPurchaseData patch error: " + ex.Message);
-			}
-		}
-	}
-	*/
-
-    // ------------------------------------------------------------
-    // D) PitStop UI price label boost/reset per module
-    // ------------------------------------------------------------
     [HarmonyPatch]
     internal static class PitStop_UI_Prices_After_UpdateIndependent
     {
@@ -962,35 +817,7 @@ namespace PersistentLocos.Plus
 			catch { }
 		}
 	}
-
-    [HarmonyPatch(typeof(LocoResourceModule), "UpdateResourcePricePerUnit")]
-	internal static class LocoResourceModule_UpdateResourcePricePerUnit_Patch
-	{
-		[HarmonyPostfix]
-		static void Postfix(object __instance)
-		{
-			try
-			{
-				var car = Helpers.ResolveCarFromCashRegister(__instance);
-				if (car == null || !Helpers.IsLocomotive(car)) return;
-
-				var data = Helpers.GetCashRegisterData(__instance);
-				if (data == null) return;
-
-				// UI-Update erfolgt ausschließlich über ApplyUiPriceBoostForIndicators
-				// KEIN eigener Rewrite hier!
-			}
-			catch (Exception ex)
-			{
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("LocoResourceModule.UpdateResourcePricePerUnit patch error: " + ex.Message);
-			}
-		}
-	}
-
-    // ------------------------------------------------------------
-    // E) Helpers
-    // ------------------------------------------------------------
+	
     internal sealed class ReferenceEqualityComparer : IEqualityComparer<object>
     {
         public static readonly ReferenceEqualityComparer Instance = new ReferenceEqualityComparer();
@@ -1000,13 +827,6 @@ namespace PersistentLocos.Plus
 
     internal static class Helpers
     {
-        // Cache für Lizenzprüfung
-        private static Type   _licenseManagerT;
-        private static Type   _singletonBehaviourGenericT;
-        private static object _licenseManagerInstance;
-        private static MethodInfo _isGeneralAcquiredM;
-        private static object _manualServiceV2;
-
         public static bool IsTrainCarType(Type t) =>
             t != null && (t.FullName == "TrainCar" || t.FullName == "DV.TrainCar");
 
@@ -1034,96 +854,46 @@ namespace PersistentLocos.Plus
 
         public static bool HasManualServiceLicense()
 		{
-			try
-			{
-				if (_licenseManagerT == null)
-					_licenseManagerT = AccessTools.TypeByName("LicenseManager") ?? AccessTools.TypeByName("DV.LicenseManager");
-				if (_licenseManagerT == null) return true;
-
-				if (_singletonBehaviourGenericT == null)
-					_singletonBehaviourGenericT = AccessTools.TypeByName("SingletonBehaviour`1");
-				if (_singletonBehaviourGenericT == null) return true;
-
-				if (_licenseManagerInstance == null)
-				{
-					var generic = _singletonBehaviourGenericT.MakeGenericType(_licenseManagerT);
-					var instProp = AccessTools.Property(generic, "Instance");
-					_licenseManagerInstance = instProp?.GetValue(null);
-				}
-				if (_licenseManagerInstance == null) return true;
-
-				if (_isGeneralAcquiredM == null)
-					_isGeneralAcquiredM = AccessTools.Method(_licenseManagerT, "IsGeneralLicenseAcquired");
-				if (_isGeneralAcquiredM == null) return true;
-
-				if (_manualServiceV2 == null)
-				{
-					var genEnumT = AccessTools.TypeByName("DV.ThingTypes.GeneralLicenseType") ?? typeof(GeneralLicenseType);
-					object manualEnum = Enum.ToObject(genEnumT, 100);
-
-					MethodInfo toV2 = null;
-					var trT = AccessTools.TypeByName("DV.ThingTypes.TransitionHelpers.GeneralLicenseTypeExtensions");
-					if (trT != null)
-						toV2 = AccessTools.Method(trT, "ToV2", new[] { genEnumT });
-
-					if (toV2 == null)
-					{
-						foreach (var t in genEnumT.Assembly.GetTypes())
-						{
-							var m = AccessTools.Method(t, "ToV2", new[] { genEnumT });
-							if (m != null && m.IsStatic) { toV2 = m; break; }
-						}
-					}
-
-					if (toV2 != null)
-						_manualServiceV2 = toV2.Invoke(null, new object[] { manualEnum });
-				}
-				if (_manualServiceV2 == null) return true;
-
-				var res = _isGeneralAcquiredM.Invoke(_licenseManagerInstance, new object[] { _manualServiceV2 });
-				return res is bool b ? b : true;
-			}
-			catch
-			{
-				return true;
-			}
+			return SingletonBehaviour<LicenseManager>.Instance.IsGeneralLicenseAcquired(GeneralLicenseType.ManualService.ToV2());
 		}
-
 
         public static double GetEffectiveServiceMultiplier(object trainCar)
 		{
+			PersistentLocos.Main.Log(
+				$"[DBG] enableUnowned={Main.Settings.enableUnownedServiceMultiplier}, " +
+				$"assumeNonOwnedWhenUnknown={Main.Settings.assumeNonOwnedWhenUnknown}, " +
+				$"unownedMult={Main.Settings.unownedServiceMultiplier}"
+			);
+
 			double mult = 1d;
 
-			// Unowned
+			bool hasManualService = SingletonBehaviour<LicenseManager>.Instance.IsGeneralLicenseAcquired(GeneralLicenseType.ManualService.ToV2());
+						
+			if (Main.Settings.enableRepairWithoutLicense && !hasManualService)
+			{
+				mult *= Math.Max(1d, (double)Main.Settings.repairWithoutLicenseMultiplier);
+			}
+
 			try
 			{
 				bool owned;
 				bool known = PersistentLocos.Plus.Ownership.TryIsOwned(trainCar, out owned);
 				bool applyUnowned =
-					PersistentLocos.Main.Settings.enableUnownedServiceMultiplier &&
-					((known && !owned) || (!known && PersistentLocos.Main.Settings.assumeNonOwnedWhenUnknown));
+					PersistentLocos.Main.Settings.enableUnownedServiceMultiplier &&	((known && !owned) || (!known && PersistentLocos.Main.Settings.assumeNonOwnedWhenUnknown));
+
 				if (applyUnowned)
-					mult *= Math.Max(1d, (double)PersistentLocos.Main.Settings.serviceCostMultiplierForNonOwned);
+					mult *= Math.Max(1d, (double)PersistentLocos.Main.Settings.unownedServiceMultiplier);
 			}
 			catch { }
 
-			// No license (nur wenn Bypass aktiv und Spieler die Lizenz NICHT hat)
-			try
-			{
-				if (PersistentLocos.Main.Settings.enableRepairWithoutLicense && !HasManualServiceLicense())
-					mult *= Math.Max(1d, (double)PersistentLocos.Main.Settings.repairWithoutLicenseMultiplier);
-			}
-			catch { }
-
+			PersistentLocos.Main.Log($" FINAL mult = {mult}");
 			return mult;
 		}
 
-        // Resolve car from CashRegisterModule or LocoResourceModule
         public static object ResolveCarFromCashRegister(object cashInstance)
         {
             if (cashInstance == null) return null;
 
-            // 1) From Data.car
             try
             {
                 var data = GetCashRegisterData(cashInstance);
@@ -1136,7 +906,6 @@ namespace PersistentLocos.Plus
             }
             catch { }
 
-            // 2) Fallbacks
             foreach (var nm in new[] { "trainCar","car","loco","targetCar","selectedCar","currentCar" })
             {
                 try
@@ -1235,7 +1004,7 @@ namespace PersistentLocos.Plus
 		
 		[ThreadStatic]
         private static bool _inUiRewrite;
-
+		
         private sealed class BoostEntry
         {
             public string guid;
@@ -1243,7 +1012,6 @@ namespace PersistentLocos.Plus
             public float  lastApplyTime;
         }
 
-        // Pro Indicators-Objekt merken wir uns zuletzt angewandten Zustand
         private static readonly Dictionary<object, BoostEntry> _indicatorsState =
             new Dictionary<object, BoostEntry>(ReferenceEqualityComparer.Instance);
 
@@ -1261,7 +1029,6 @@ namespace PersistentLocos.Plus
                 return true;
             }
 
-            // gleiche Lok & gleicher Multiplier? Dann nur alle 0.5s neu (Safety)
             if (e.guid == guid && Mathf.Abs(e.mult - mult) < 0.001f)
             {
                 if (Time.time - e.lastApplyTime < 0.5f) return false;
@@ -1280,14 +1047,12 @@ namespace PersistentLocos.Plus
                 if (indicatorsInstance == null || trainCar == null) return;
                 if (!IsLocomotive(trainCar)) return;
 
-                // Reentry verhindern
                 if (_inUiRewrite) return;
                 _inUiRewrite = true;
 
                 float mult = (float)GetEffectiveServiceMultiplier(trainCar);
                 string g = TryGetCarGuidForCache(trainCar);
 
-                // Throttle/Skip wenn unverändert
                 if (!ShouldApplyForIndicators(indicatorsInstance, g, mult))
                 {
                     _inUiRewrite = false;
@@ -1346,7 +1111,6 @@ namespace PersistentLocos.Plus
             }
         }
 
-        // Write pricePerUnitText & totalPriceText based on Data.pricePerUnit and unitsToBuy
         public static void WriteModuleTextsFromData(object module, object data)
         {
             try
@@ -1374,7 +1138,6 @@ namespace PersistentLocos.Plus
             catch { }
         }
 
-        // Refresh helpers (unchanged)
         public static void RefreshPitStopUiForCar(object trainCar)
         {
             try
@@ -1416,7 +1179,7 @@ namespace PersistentLocos.Plus
                     dispLatest?.Invoke(st, new object[] { false });
 
                     if (PersistentLocos.Main.Settings.enableLogging)
-                        PersistentLocos.Main.Log("[PLP] PitStop UI refresh after ownership change (target car).");
+                        PersistentLocos.Main.Log("PitStop UI refresh after ownership change (target car).");
                 }
             }
             catch (Exception ex)
@@ -1469,7 +1232,7 @@ namespace PersistentLocos.Plus
                 }
 
                 if (PersistentLocos.Main.Settings.enableLogging)
-                    PersistentLocos.Main.Log("[PLP] PitStop UI refresh after ownership change (all selected).");
+                    PersistentLocos.Main.Log("PitStop UI refresh after ownership change (all selected).");
             }
             catch (Exception ex)
             {
@@ -1478,105 +1241,75 @@ namespace PersistentLocos.Plus
             }
         }
     }
-	// ------------------------------------------------------------
-	// F) Invoice – prevent double multiplier
-	// ------------------------------------------------------------
-	[HarmonyPatch]
-	internal static class Invoice_CalculateTotal_NoDoubleMultiplier
-	{
-		private static MethodBase _target;
-
-		static bool Prepare()
-		{
-			// Zielmethode finden (versionssicher)
-			var invoiceT =
-				AccessTools.TypeByName("DV.Booklets.Invoice")
-				?? AccessTools.TypeByName("Invoice");
-
-			if (invoiceT == null) return false;
-
-			_target =
-				AccessTools.Method(invoiceT, "CalculateTotal")
-				?? AccessTools.Method(invoiceT, "RecalculateTotal")
-				?? AccessTools.Method(invoiceT, "UpdateTotal");
-
-			return _target != null;
-		}
-
-		[HarmonyTargetMethod]
-		static MethodBase TargetMethod() => _target;
-
-		[HarmonyPrefix]
-		static void Prefix(object __instance)
-		{
-			try
-			{
-				// Lines / entries der Rechnung holen
-				var linesField =
-					AccessTools.Field(__instance.GetType(), "lines")
-					?? AccessTools.Field(__instance.GetType(), "entries");
-
-				if (linesField == null) return;
-
-				var lines = linesField.GetValue(__instance) as IEnumerable;
-				if (lines == null) return;
-
-				foreach (var line in lines)
-				{
-					if (line == null) continue;
-
-					// Datenobjekt der Line
-					var dataField =
-						AccessTools.Field(line.GetType(), "data")
-						?? AccessTools.Field(line.GetType(), "moduleData");
-
-					var data = dataField?.GetValue(line);
-					if (data == null) continue;
-
-					// Wenn wir einen originalen Preis kennen → für Invoice normalisieren
-					if (UiPriceState.TryGetOriginal(data, out var original))
-					{
-						var ppuField = AccessTools.Field(data.GetType(), "pricePerUnit");
-						if (ppuField != null && ppuField.FieldType == typeof(float))
-						{
-							ppuField.SetValue(data, original);
-						}
-					}
-				}
-
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("[PLP] Invoice normalized (no double multiplier).");
-			}
-			catch (Exception ex)
-			{
-				if (PersistentLocos.Main.Settings.enableLogging)
-					PersistentLocos.Main.Log("Invoice normalization error (non-fatal): " + ex.Message);
-			}
-		}
-	}
-	// ------------------------------------------------------------
-	// E) CashRegister – apply service multiplier ONLY to total price
-	// ------------------------------------------------------------
+	
 	[HarmonyPatch(typeof(CashRegisterModule), nameof(CashRegisterModule.GetTotalPrice))]
 	internal static class CashRegister_GetTotalPrice_WithMultiplier
 	{
 		[HarmonyPostfix]
 		static void Postfix(CashRegisterModule __instance, ref double __result)
 		{
-			var car = Helpers.ResolveCarFromCashRegister(__instance);
-			if (car == null || !Helpers.IsLocomotive(car))
-				return;
+			var car = Helpers.ResolveCarFromCashRegister(__instance) as TrainCar;
+			if (car == null || !Helpers.IsLocomotive(car)) return;
 
-			double mult = Helpers.GetEffectiveServiceMultiplier(car);
-			if (mult <= 1d)
-				return;
+			double totalMult = 1.0;
 
-			__result *= mult;
+			if (Main.Settings.enableUnownedServiceMultiplier)
+			{
+				bool isOwned = true;
+				PersistentLocos.Plus.Ownership.TryIsOwned(car, out isOwned);
 
-			if (PersistentLocos.Main.Settings.enableLogging)
-				PersistentLocos.Main.Log(
-					$"[PersistentLocos] GetTotalPrice multiplied by {mult:0.##}"
-				);
+				if (!isOwned)
+				{
+					totalMult *= Main.Settings.unownedServiceMultiplier;
+				}
+			}
+
+			if (Main.Settings.enableRepairWithoutLicense)
+			{
+				bool hasLicense = SingletonBehaviour<LicenseManager>.Instance.IsGeneralLicenseAcquired(DV.ThingTypes.GeneralLicenseType.ManualService.ToV2());
+				
+				if (!hasLicense)
+				{
+					totalMult *= Main.Settings.repairWithoutLicenseMultiplier;
+				}
+			}
+
+			if (totalMult > 1.01)
+			{
+				__result *= totalMult;
+				
+				if (Main.Settings.enableLogging)
+					Main.Log($"[PriceCheck] {car.ID}: Mult {totalMult:0.##}x -> Endpreis: {__result:0.00}");
+			}
+		}
+	}
+	
+	[HarmonyPatch(typeof(PitStop), "Awake")]
+	public static class PitStop_Awake_Patch
+	{
+		static void Postfix(PitStop __instance)
+		{
+			if (Main.Settings.enableRepairWithoutLicense)
+			{
+				AccessTools.Field(typeof(PitStop), "isManualServiceLicenseAcquired").SetValue(__instance, true);
+
+				try {
+					var textObj = AccessTools.Field(typeof(PitStop), "manualServiceText").GetValue(__instance);
+					var title = (string)AccessTools.Property(typeof(PitStop), "MANUAL_SERVICE_TITLE").GetValue(__instance);
+					if (textObj != null) 
+						AccessTools.Property(textObj.GetType(), "text").SetValue(textObj, title);
+				} catch {}
+			}
+		}
+	}
+
+	[HarmonyPatch(typeof(PitStop), "OnTriggerEnter")]
+	public static class PitStop_OnTriggerEnter_Patch
+	{
+		static void Prefix(PitStop __instance)
+		{
+			if (Main.Settings.enableRepairWithoutLicense)
+				AccessTools.Field(typeof(PitStop), "isManualServiceLicenseAcquired").SetValue(__instance, true);
 		}
 	}
 }
