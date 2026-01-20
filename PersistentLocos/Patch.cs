@@ -262,27 +262,6 @@ namespace PersistentLocos
 
 namespace PersistentLocos.Plus
 {
-	[HarmonyPatch(typeof(LocoDebtController), nameof(LocoDebtController.RegisterLocoDebtTracker))]
-	internal static class LocoDebtController_RegisterLocoDebtTracker_BlockWhenPersistentDamage
-	{
-		[HarmonyPrefix]
-		private static bool Prefix(LocoDebtController __instance, TrainCar car, LocoDebtTrackerBase locoDebtTracker)
-		{
-			if (!PersistentLocos.Main.Settings.enablePersistentDamage)
-				return true;
-			try
-			{
-				locoDebtTracker?.TurnOffDebtSources();
-			}
-			catch { }
-
-			if (PersistentLocos.Main.Settings.enableLogging)
-				PersistentLocos.Main.Log("LocoDebtController.RegisterLocoDebtTracker blocked (persistent damage).");
-
-			return false;
-		}
-	}
-	
 	[HarmonyPatch(typeof(LocoDebtController), nameof(LocoDebtController.StageLocoDebtOnLocoDestroy))]
 	internal static class LocoDebtController_StageOnDestroy_BlockWhenPersistentDamage
 	{
@@ -860,7 +839,7 @@ namespace PersistentLocos.Plus
         public static double GetEffectiveServiceMultiplier(object trainCar)
 		{
 			PersistentLocos.Main.Log(
-				$"[DBG] enableUnowned={Main.Settings.enableUnownedServiceMultiplier}, " +
+				$"enableUnowned={Main.Settings.enableUnownedServiceMultiplier}, " +
 				$"assumeNonOwnedWhenUnknown={Main.Settings.assumeNonOwnedWhenUnknown}, " +
 				$"unownedMult={Main.Settings.unownedServiceMultiplier}"
 			);
@@ -1039,9 +1018,47 @@ namespace PersistentLocos.Plus
             e.lastApplyTime = Time.time;
             return true;
         }
+		
+		internal static class PitstopThrottle
+		{
+			private static readonly Dictionary<string, float> _lastRun = new();
+
+			public static bool ShouldRun(object trainCar, float intervalSeconds)
+			{
+				if (trainCar == null)
+					return false;
+
+				string guid = Helpers.GetCarGuid(trainCar);
+				if (string.IsNullOrEmpty(guid))
+					return false;
+
+				float now = Time.time;
+
+				if (_lastRun.TryGetValue(guid, out float last))
+				{
+					if (now - last < intervalSeconds)
+						return false;
+				}
+
+				_lastRun[guid] = now;
+				return true;
+			}
+
+			public static void Clear(object trainCar)
+			{
+				if (trainCar == null) return;
+
+				string guid = Helpers.GetCarGuid(trainCar);
+				if (!string.IsNullOrEmpty(guid))
+					_lastRun.Remove(guid);
+			}
+		}
 
         public static void ApplyUiPriceBoostForIndicators(object indicatorsInstance, object trainCar)
         {
+			if (!PitstopThrottle.ShouldRun(trainCar, 10f))
+				return;
+			
             try
             {
                 if (indicatorsInstance == null || trainCar == null) return;

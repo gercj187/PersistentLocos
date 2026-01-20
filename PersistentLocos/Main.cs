@@ -82,7 +82,8 @@ namespace PersistentLocos
             {
                 GUILayout.Space(5);
                 GUILayout.Label($"Service multiplier: {Settings.unownedServiceMultiplier:0.0}x");
-                GUILayout.Label($"(Increases Manual Service costs for locomotives you do not own — excluding demonstrators or those purchased via LocoOwnership Mod)");
+                GUILayout.Label($"Increases Manual Service costs for locomotives you do not own");
+                GUILayout.Label($"(excluding demonstrators or those purchased via LocoOwnership Mod)");
                 float raw = GUILayout.HorizontalSlider(Settings.unownedServiceMultiplier, 1.0f, 5.0f, GUILayout.Width(480));
                 float snapped = Mathf.Clamp((float)Math.Round(raw * 2f) / 2f, 1.0f, 5.0f);
                 Settings.unownedServiceMultiplier = snapped;
@@ -95,7 +96,8 @@ namespace PersistentLocos
 			if (Settings.enableRepairWithoutLicense)
 			{
 				GUILayout.Space(5);
-				GUILayout.Label($"Price multiplier (No Manual Service license): {Settings.repairWithoutLicenseMultiplier:0.0}x");
+				GUILayout.Label($"Price multiplier: {Settings.repairWithoutLicenseMultiplier:0.0}x");
+				GUILayout.Label($"(Only if the ‘Manual Service’ license has not been acquired.)");
 				float raw2 = GUILayout.HorizontalSlider(Settings.repairWithoutLicenseMultiplier,1.5f,10.0f,GUILayout.Width(480));
 				float snapped2 = Mathf.Clamp((float)Math.Round(raw2 * 2f) / 2f,1.5f,10.0f);
 				Settings.repairWithoutLicenseMultiplier = snapped2;
@@ -121,14 +123,13 @@ namespace PersistentLocos
 				GUI.backgroundColor = oldColor;
 			}
 
-            GUILayout.Space(10);
-            Settings.enableLogging = GUILayout.Toggle(Settings.enableLogging, "Enable debug logging");
+            //GUILayout.Space(10);
+            //Settings.enableLogging = GUILayout.Toggle(Settings.enableLogging, "Enable debug logging");
         }
 
         static void OnSaveGUI(UnityModManager.ModEntry modEntry)
         {
 			Settings.Save(modEntry);
-			Log("Settings saved.");
         }
 
         static float _timeSinceStart = 0f;
