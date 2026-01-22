@@ -1,3 +1,4 @@
+//LETZTE VERSION!
 using DV.Booklets;
 using DV.Common;
 using DV.JObjectExtstensions;
@@ -9,6 +10,7 @@ using DV.ThingTypes.TransitionHelpers;
 using DV.ThingTypes;
 using DV.UserManagement;
 using DV.Utils;
+using DV.Simulation.Cars;
 using DV.ServicePenalty;
 using DV;
 using HarmonyLib;
@@ -37,10 +39,116 @@ namespace PersistentLocos
         static void Postfix()
         {
             LocoSpawnState.Reset();
-            Debug.Log("[PersistentLocos] New career detected – counter reset.");
-            Debug.Log($"[PersistentLocos] Starting new game. LocoLimit (from settings): {Main.Settings.LocoLimit}");
+			Main.Log("New career detected – counter reset.");
+			Main.Log($"Starting new game. LocoLimit (from settings): {Main.Settings.LocoLimit}");
+			
+            // NEW: schedule handbrake apply after ~10s once cars are loaded
+            NewCareerHandbrakeApplier.MarkNewCareer();
         }
     }
+
+    internal static class NewCareerHandbrakeApplier
+    {
+        public static void MarkNewCareer()
+        {
+			Main.Log("Will apply handbrakes after load + ~10s.");
+			CoroutineDispatcher.Instance.RunCoroutine(ApplyAfterDelayCoroutine());
+        }
+
+        private static IEnumerator ApplyAfterDelayCoroutine()
+        {
+            // wait until cars/jobs loading finished
+            yield return new WaitUntil(() => AStartGameData.carsAndJobsLoadingFinished);
+
+            // ~10 sec timer requested
+            yield return new WaitForSeconds(10f);
+
+            int total = 0;
+            int targeted = 0;
+            int applied = 0;
+            int skippedNoBrake = 0;
+            int skippedNoHandbrake = 0;
+            int errors = 0;
+
+            try
+            {
+                var cars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+                total = cars != null ? cars.Length : 0;
+
+                if (cars != null)
+                {
+                    foreach (var car in cars)
+                    {
+                        if (car == null) continue;
+
+                        try
+                        {
+                            bool isLoco = car.IsLoco;
+                            bool isTender = CarTypes.IsTender(car.carLivery);
+
+                            if (!isLoco && !isTender)
+                                continue;
+
+                            targeted++;
+
+                            var bs = car.brakeSystem;
+                            if (bs == null)
+                            {
+                                skippedNoBrake++;
+                                continue;
+                            }
+
+                            if (!bs.hasHandbrake)
+                            {
+                                skippedNoHandbrake++;
+                                continue;
+                            }
+
+                            // Full apply. BrakeSystem clamps 0..1 internally.
+                            bs.SetHandbrakePosition(1f, true);
+                            applied++;
+
+                            if (Main.Settings != null && Main.Settings.enableLogging)
+                                Main.Log($"Applied handbrake=1.0 to {(isLoco ? "Loco" : "Tender")} ID={car.ID} Type={car.carLivery?.id}");
+							
+							var overrider = car.SimController?.controlsOverrider;
+							if (overrider != null)
+							{
+								overrider.skipGameLoadBrakeSetup = true;
+								
+								if (Main.Settings != null && Main.Settings.enableLogging)
+								{
+									Main.Log($"Handbrakes persistent → {(isLoco ? "Loco" : isTender ? "Tender" : "Car")} ID={car.ID} Type={car.carLivery?.id}");
+								}
+							}
+                        }
+                        catch (Exception exCar)
+                        {
+                            errors++;
+                            if (Main.Settings != null && Main.Settings.enableLogging)
+                                Main.Log("[ERROR] Error per-car: " + exCar);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                errors++;
+                if (Main.Settings != null && Main.Settings.enableLogging)
+                    Main.Log("[ERROR] Fatal error: " + ex);
+            }
+            Main.Log($"TotalCars={total} Target(Loco+Tender)={targeted} Applied={applied} NoBrakeSystem={skippedNoBrake} NoHandbrake={skippedNoHandbrake} Errors={errors}");
+        }
+    }
+	
+	[HarmonyPatch(typeof(LocoZoneBlocker), "SetBrakeValues")]
+	internal static class Patch_LocoZoneBlocker_DisableBrakeOverride
+	{
+		static bool Prefix()
+		{
+			return false;
+		}
+	}
 
     [HarmonyPatch(typeof(UnusedTrainCarDeleter), "AreDeleteConditionsFulfilled")]
     class Patch_AreDeleteConditionsFulfilled
@@ -119,12 +227,7 @@ namespace PersistentLocos
             if (__result == null || !__result.IsLoco || playerSpawnedCar) return;
 
             LocoSpawnState.Increment();
-            Debug.Log($"[PersistentLocos] Locomotive #{LocoSpawnState.Count} registered Type: {__result.carLivery?.id}, ID: {__result.ID}");
-            if (__result.brakeSystem != null && __result.brakeSystem.hasHandbrake)
-            {
-                __result.brakeSystem.SetHandbrakePosition(1f);
-                Debug.Log($"[PersistentLocos] Handbrake fully applied for locomotive ID: {__result.ID}");
-            }
+            Main.Log($"Locomotive #{LocoSpawnState.Count} registered Type: {__result.carLivery?.id}, ID: {__result.ID}");
         }
     }
 
@@ -182,11 +285,11 @@ namespace PersistentLocos
             if (saveData != null)
             {
                 LocoSpawnState.LoadFrom(saveData);
-                Debug.Log($"[PersistentLocos] Loaded locomotive count from save (late): {LocoSpawnState.Count}");
+                Main.Log($"Loaded locomotive count from save (late): {LocoSpawnState.Count}");
             }
             else
             {
-                Debug.LogWarning("[PersistentLocos] SaveGameData is null – cannot load counter (late)");
+                Main.Log("SaveGameData is null – cannot load counter (late)");
             }
         }
     }
@@ -232,14 +335,14 @@ namespace PersistentLocos
             if (maybeLimit.HasValue)
             {
                 Main.Settings.LocoLimit = maybeLimit.Value;
-                Debug.Log($"[PersistentLocos] Loaded LocoLimit from save: {Main.Settings.LocoLimit}");
+                Main.Log($"Loaded LocoLimit from save: {Main.Settings.LocoLimit}");
             }
             else
             {
-                Debug.LogWarning("[PersistentLocos] No LocoLimit saved – using default or settings value");
+                Main.Log("No LocoLimit saved – using default or settings value");
             }
 
-            Debug.Log($"[PersistentLocos] Loaded locomotive count from save: {_count}");
+            Main.Log($"Loaded locomotive count from save: {_count}");
         }
 
         public static void SaveTo(SaveGameData saveData)
@@ -360,39 +463,49 @@ namespace PersistentLocos.Plus
         private static bool _notifiedOnce;
 
         static bool Prepare()
-        {
-            _targets.Clear();
-            var baseT = AccessTools.TypeByName("DV.ServicePenalty.DisplayableDebt");
-            if (baseT == null) return false;
+		{
+			_targets.Clear();
 
-            var asm = baseT.Assembly;
-            foreach (var t in asm.GetTypes())
-            {
-                if (t == null || t == baseT) continue;
-                if (!baseT.IsAssignableFrom(t)) continue;
+			var baseT = AccessTools.TypeByName("DV.ServicePenalty.DisplayableDebt");
+			if (baseT == null) return false;
 
-                var n = (t.FullName ?? t.Name).ToLowerInvariant();
-                if (!(n.Contains("loco") || n.Contains("tender"))) continue;
+			foreach (var t in baseT.Assembly.GetTypes())
+			{
+				if (t == null || t == baseT) continue;
+				if (!baseT.IsAssignableFrom(t)) continue;
 
-                var m = AccessTools.Method(t, "GetTotalPrice", Type.EmptyTypes);
-                if (m == null || m.IsAbstract) continue;
-                if (m.DeclaringType == t) _targets.Add(m);
-            }
+				var n = (t.FullName ?? t.Name).ToLowerInvariant();
+				if (!n.Contains("loco") && !n.Contains("tender")) continue;
 
-            if (_targets.Count == 0)
-            {
-                if (PersistentLocos.Main.Settings.enableLogging && !_notifiedOnce)
-                {
-                    PersistentLocos.Main.Log("LocoDebt_GetTotalPrice_Overrides: no targets (OK for this build).");
-                    _notifiedOnce = true;
-                }
-                return false;
-            }
+				var m = AccessTools.Method(t, "GetTotalPrice", Type.EmptyTypes);
+				if (m == null || m.IsAbstract) continue;
+				if (m.DeclaringType == t)
+					_targets.Add(m);
+			}
 
-            if (PersistentLocos.Main.Settings.enableLogging)
-                PersistentLocos.Main.Log("Neutralizing GetTotalPrice() for " + _targets.Count + " loco-debt override(s).");
-            return true;
-        }
+			if (_targets.Count == 0)
+			{
+				if (PersistentLocos.Main.Settings.enableLogging && !_notifiedOnce)
+				{
+					PersistentLocos.Main.Log(
+						"LocoDebt_GetTotalPrice_Overrides: no targets (OK for this build)."
+					);
+					_notifiedOnce = true;
+				}
+				return false;
+			}
+
+			if (PersistentLocos.Main.Settings.enableLogging && !_notifiedOnce)
+			{
+				PersistentLocos.Main.Log(
+					$"Neutralizing loco-debt override(s) for {_targets.Count} locos."
+				);
+				_notifiedOnce = true;
+			}
+
+			return true;
+		}
+
 
         [HarmonyTargetMethods] static IEnumerable<MethodBase> TargetMethods() => _targets;
         [HarmonyPrefix]
@@ -404,6 +517,87 @@ namespace PersistentLocos.Plus
 			return false;
 		}
     }
+	
+    internal static class OwnershipLog
+    {
+        public static void Log(string action, TrainCar car)
+        {
+            if (car == null)
+                return;
+
+            bool isLoco   = car.IsLoco;
+            bool isTender = CarTypes.IsTender(car.carLivery);
+
+            string kind =
+                isLoco   ? "LOCO" :
+                isTender ? "TENDER" :
+                "CAR";
+
+            PersistentLocos.Main.Log(
+                $"Ownership {action} → {kind} ID={car.ID} Type={car.carLivery?.id}"
+            );
+        }
+    }
+	
+	[HarmonyPatch]
+	internal static class OwnedLocosManager_BuyLoco_ClearServiceCache
+	{
+		private static MethodBase _target;
+
+		static bool Prepare()
+		{
+			var t = AccessTools.TypeByName("LocoOwnership.OwnershipHandler.OwnedLocosManager");
+			if (t == null)
+				return false;
+
+			_target = AccessTools.Method(t, "BuyLoco");
+			return _target != null;
+		}
+
+		[HarmonyTargetMethod]
+		static MethodBase TargetMethod() => _target;
+
+		static void Postfix(object selectedCar)
+		{
+			if (selectedCar is not TrainCar car)
+				return;
+
+			PersistentLocos.Plus.ServiceMultiplierCache.ClearAll();
+			Helpers.RefreshPitStopsForAllSelected();
+
+			OwnershipLog.Log("BUY", car);
+		}
+	}
+
+	[HarmonyPatch]
+	internal static class OwnedLocosManager_SellLoco_ClearServiceCache
+	{
+		private static MethodBase _target;
+
+		static bool Prepare()
+		{
+			var t = AccessTools.TypeByName("LocoOwnership.OwnershipHandler.OwnedLocosManager");
+			if (t == null)
+				return false;
+
+			_target = AccessTools.Method(t, "SellLoco");
+			return _target != null;
+		}
+
+		[HarmonyTargetMethod]
+		static MethodBase TargetMethod() => _target;
+
+		static void Postfix(object selectedCar)
+		{
+			if (selectedCar is not TrainCar car)
+				return;
+
+			PersistentLocos.Plus.ServiceMultiplierCache.ClearAll();
+			Helpers.RefreshPitStopsForAllSelected();
+
+			OwnershipLog.Log("SELL", car);
+		}
+	}
 
     internal static class Ownership
     {
@@ -453,8 +647,7 @@ namespace PersistentLocos.Plus
                         }
                     }
 
-                    if (Main.Settings.enableLogging)
-                        Main.Log("LocoOwnership ready.");
+                    Main.Log("LocoOwnership ready.");
                 }
                 else
                 {
@@ -467,8 +660,7 @@ namespace PersistentLocos.Plus
             }
             catch (Exception ex)
             {
-                if (Main.Settings.enableLogging)
-                    Main.Log("Ownership init error (non-fatal): " + ex);
+                Main.Log("Ownership init error (non-fatal): " + ex);
             }
 
             _init = true;
@@ -528,8 +720,7 @@ namespace PersistentLocos.Plus
                 if (IsRestorationOrPlayerSpawned(trainCar))
                 {
                     owned = true;
-                    if (Main.Settings.enableLogging)
-                        Main.Log("Ownership: restoration/playerSpawned/unique -> OWNED");
+                    Main.Log("Ownership: restoration/playerSpawned/unique -> OWNED");
                     return true;
                 }
 
@@ -541,8 +732,7 @@ namespace PersistentLocos.Plus
                         if (!b1 && IsRestorationOrPlayerSpawned(trainCar))
                         {
                             owned = true;
-                            if (Main.Settings.enableLogging)
-                                Main.Log("Ownership: LocoOwnership=false but restoration/playerSpawned/unique -> OWNED");
+                            Main.Log("Ownership: LocoOwnership=false but restoration/playerSpawned/unique -> OWNED");
                             return true;
                         }
                         owned = b1;
@@ -560,8 +750,7 @@ namespace PersistentLocos.Plus
                         if (!b2 && IsRestorationOrPlayerSpawned(trainCar))
                         {
                             owned = true;
-                            if (Main.Settings.enableLogging)
-                                Main.Log("Ownership: LocoOwnership(false by guid) but restoration/playerSpawned/unique -> OWNED");
+                            Main.Log("Ownership: LocoOwnership(false by guid) but restoration/playerSpawned/unique -> OWNED");
                             return true;
                         }
                         owned = b2;
@@ -584,8 +773,7 @@ namespace PersistentLocos.Plus
                 if (IsRestorationOrPlayerSpawned(trainCar))
                 {
                     owned = true;
-                    if (Main.Settings.enableLogging)
-                        Main.Log("Ownership: fallback restoration/playerSpawned/unique -> OWNED");
+                    Main.Log("Ownership: fallback restoration/playerSpawned/unique -> OWNED");
                     return true;
                 }
 
@@ -593,8 +781,7 @@ namespace PersistentLocos.Plus
             }
             catch (Exception ex)
             {
-                if (Main.Settings.enableLogging)
-                    Main.Log("TryIsOwned error (non-fatal): " + ex);
+                Main.Log("TryIsOwned error (non-fatal): " + ex);
                 return false;
             }
         }
@@ -702,6 +889,17 @@ namespace PersistentLocos.Plus
             return t.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IDictionary<,>) && i.GetGenericArguments()[0] == typeof(TKey));
         }
     }
+	
+	[HarmonyPatch(typeof(LicenseManager), nameof(LicenseManager.AcquireGeneralLicense))]
+	internal static class LicenseManager_AcquireGeneralLicense_InvalidateServiceCache
+	{
+		[HarmonyPostfix]
+		private static void Postfix(GeneralLicenseType_v2 license)
+		{
+			// echte Zustandsänderung → Cache ungültig
+			PersistentLocos.Plus.ServiceMultiplierCache.ClearAll();
+		}
+	}
 
     internal static class UiPriceState
     {
@@ -744,6 +942,9 @@ namespace PersistentLocos.Plus
         [HarmonyPostfix]
         static void Postfix(object __instance, object __0 /* selectedCar */)
         {
+			if (!Main.Settings.enableUnownedServiceMultiplier &&
+				!Main.Settings.enableRepairWithoutLicense)
+				return;
             Helpers.ApplyUiPriceBoostForIndicators(__instance, __0);
         }
     }
@@ -775,7 +976,10 @@ namespace PersistentLocos.Plus
         [HarmonyPostfix]
         static void Postfix(object __instance, object __0 /* selectedCar */)
         {
-            Helpers.ApplyUiPriceBoostForIndicators(__instance, __0);
+            if (!Main.Settings.enableUnownedServiceMultiplier &&
+				!Main.Settings.enableRepairWithoutLicense)
+				return;
+			Helpers.ApplyUiPriceBoostForIndicators(__instance, __0);
         }
     }
 
@@ -785,6 +989,9 @@ namespace PersistentLocos.Plus
 		[HarmonyPostfix]
 		static void Postfix(object __instance)
 		{
+            if (!Main.Settings.enableUnownedServiceMultiplier &&
+				!Main.Settings.enableRepairWithoutLicense)
+				return;
 			try
 			{
 				var pitstop = AccessTools.Field(__instance.GetType(), "pitstop")?.GetValue(__instance);
@@ -803,6 +1010,156 @@ namespace PersistentLocos.Plus
         public new bool Equals(object x, object y) => ReferenceEquals(x, y);
         public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
     }
+	
+	internal static class ServiceMultiplierCache
+	{
+		private sealed class StateSnapshot
+		{
+			public bool hasManualService;
+			public bool ownershipKnown;
+			public bool owned;
+
+			public bool enableRepairWithoutLicense;
+			public double repairWithoutLicenseMultiplier;
+
+			public bool enableUnownedServiceMultiplier;
+			public double unownedServiceMultiplier;
+
+			//public bool assumeNonOwnedWhenUnknown;
+
+			public override bool Equals(object obj)
+			{
+				if (obj is not StateSnapshot o) return false;
+
+				return
+					hasManualService == o.hasManualService &&
+					ownershipKnown == o.ownershipKnown &&
+					owned == o.owned &&
+					enableRepairWithoutLicense == o.enableRepairWithoutLicense &&
+					repairWithoutLicenseMultiplier.Equals(o.repairWithoutLicenseMultiplier) &&
+					enableUnownedServiceMultiplier == o.enableUnownedServiceMultiplier &&
+					unownedServiceMultiplier.Equals(o.unownedServiceMultiplier);// &&
+					//assumeNonOwnedWhenUnknown == o.assumeNonOwnedWhenUnknown;
+			}
+
+			public override int GetHashCode()
+			{
+				unchecked
+				{
+					int h = 17;
+					h = h * 31 + hasManualService.GetHashCode();
+					h = h * 31 + ownershipKnown.GetHashCode();
+					h = h * 31 + owned.GetHashCode();
+					h = h * 31 + enableRepairWithoutLicense.GetHashCode();
+					h = h * 31 + repairWithoutLicenseMultiplier.GetHashCode();
+					h = h * 31 + enableUnownedServiceMultiplier.GetHashCode();
+					h = h * 31 + unownedServiceMultiplier.GetHashCode();
+					//h = h * 31 + assumeNonOwnedWhenUnknown.GetHashCode();
+					return h;
+				}
+			}
+		}
+
+		private sealed class Entry
+		{
+			public double multiplier;
+			public StateSnapshot snapshot;
+		}
+
+		private static readonly Dictionary<string, Entry> _cache = new();
+
+		public static double GetMultiplier(object trainCar)
+		{
+			if (trainCar == null)
+				return 1.0;
+
+			string guid = Helpers.GetCarGuid(trainCar);
+			if (string.IsNullOrEmpty(guid))
+				return 1.0;
+
+			// ---- aktuellen Zustand EINMAL erfassen ----
+			bool hasManual = Helpers.HasManualServiceLicense();
+
+			
+			if (_cache.TryGetValue(guid, out var e))
+			{
+				if (
+					e.snapshot.hasManualService == hasManual &&
+					e.snapshot.enableRepairWithoutLicense == Main.Settings.enableRepairWithoutLicense &&
+					e.snapshot.repairWithoutLicenseMultiplier == Main.Settings.repairWithoutLicenseMultiplier &&
+					e.snapshot.enableUnownedServiceMultiplier == Main.Settings.enableUnownedServiceMultiplier &&
+					e.snapshot.unownedServiceMultiplier == Main.Settings.unownedServiceMultiplier
+				)
+				{
+					return e.multiplier;
+				}
+			}
+			
+			bool owned = true;
+			bool ownershipKnown = PersistentLocos.Plus.Ownership.TryIsOwned(trainCar, out owned);
+
+			var snap = new StateSnapshot
+			{
+				hasManualService = hasManual,
+				ownershipKnown = ownershipKnown,
+				owned = owned,
+
+				enableRepairWithoutLicense = Main.Settings.enableRepairWithoutLicense,
+				repairWithoutLicenseMultiplier = Main.Settings.repairWithoutLicenseMultiplier,
+
+				enableUnownedServiceMultiplier = Main.Settings.enableUnownedServiceMultiplier,
+				unownedServiceMultiplier = Main.Settings.unownedServiceMultiplier,
+
+				//assumeNonOwnedWhenUnknown = Main.Settings.assumeNonOwnedWhenUnknown
+			};
+			
+			// ---- echte Neuberechnung (NUR bei Zustandsänderung) ----
+			double mult = 1.0;
+
+			bool treatAsUnowned =
+				!snap.ownershipKnown || !snap.owned;
+	
+			if (snap.enableUnownedServiceMultiplier && treatAsUnowned)
+			{
+				mult *= Math.Max(1d, snap.unownedServiceMultiplier);
+			}
+			
+			if (snap.enableRepairWithoutLicense && !snap.hasManualService)
+			{
+				mult *= Math.Max(1d, snap.repairWithoutLicenseMultiplier);
+			}
+			/*
+			if (snap.enableUnownedServiceMultiplier)
+			{
+				if ((snap.ownershipKnown && !snap.owned) ||
+					(!snap.ownershipKnown && snap.assumeNonOwnedWhenUnknown))
+				{
+					mult *= Math.Max(1d, snap.unownedServiceMultiplier);
+				}
+			}
+			*/
+
+			_cache[guid] = new Entry
+			{
+				multiplier = mult,
+				snapshot = snap
+			};
+
+			return mult;
+		}
+
+		public static void Clear(object trainCar)
+		{
+			string guid = Helpers.GetCarGuid(trainCar);
+			if (!string.IsNullOrEmpty(guid))
+				_cache.Remove(guid);
+		}
+
+		public static void ClearAll()
+		{
+			_cache.Clear();
+		}
+	}
 
     internal static class Helpers
     {
@@ -838,35 +1195,7 @@ namespace PersistentLocos.Plus
 
         public static double GetEffectiveServiceMultiplier(object trainCar)
 		{
-			PersistentLocos.Main.Log(
-				$"enableUnowned={Main.Settings.enableUnownedServiceMultiplier}, " +
-				$"assumeNonOwnedWhenUnknown={Main.Settings.assumeNonOwnedWhenUnknown}, " +
-				$"unownedMult={Main.Settings.unownedServiceMultiplier}"
-			);
-
-			double mult = 1d;
-
-			bool hasManualService = SingletonBehaviour<LicenseManager>.Instance.IsGeneralLicenseAcquired(GeneralLicenseType.ManualService.ToV2());
-						
-			if (Main.Settings.enableRepairWithoutLicense && !hasManualService)
-			{
-				mult *= Math.Max(1d, (double)Main.Settings.repairWithoutLicenseMultiplier);
-			}
-
-			try
-			{
-				bool owned;
-				bool known = PersistentLocos.Plus.Ownership.TryIsOwned(trainCar, out owned);
-				bool applyUnowned =
-					PersistentLocos.Main.Settings.enableUnownedServiceMultiplier &&	((known && !owned) || (!known && PersistentLocos.Main.Settings.assumeNonOwnedWhenUnknown));
-
-				if (applyUnowned)
-					mult *= Math.Max(1d, (double)PersistentLocos.Main.Settings.unownedServiceMultiplier);
-			}
-			catch { }
-
-			PersistentLocos.Main.Log($" FINAL mult = {mult}");
-			return mult;
+			return ServiceMultiplierCache.GetMultiplier(trainCar);
 		}
 
         public static object ResolveCarFromCashRegister(object cashInstance)
@@ -1018,115 +1347,89 @@ namespace PersistentLocos.Plus
             e.lastApplyTime = Time.time;
             return true;
         }
-		
-		internal static class PitstopThrottle
-		{
-			private static readonly Dictionary<string, float> _lastRun = new();
-
-			public static bool ShouldRun(object trainCar, float intervalSeconds)
-			{
-				if (trainCar == null)
-					return false;
-
-				string guid = Helpers.GetCarGuid(trainCar);
-				if (string.IsNullOrEmpty(guid))
-					return false;
-
-				float now = Time.time;
-
-				if (_lastRun.TryGetValue(guid, out float last))
-				{
-					if (now - last < intervalSeconds)
-						return false;
-				}
-
-				_lastRun[guid] = now;
-				return true;
-			}
-
-			public static void Clear(object trainCar)
-			{
-				if (trainCar == null) return;
-
-				string guid = Helpers.GetCarGuid(trainCar);
-				if (!string.IsNullOrEmpty(guid))
-					_lastRun.Remove(guid);
-			}
-		}
 
         public static void ApplyUiPriceBoostForIndicators(object indicatorsInstance, object trainCar)
-        {
-			if (!PitstopThrottle.ShouldRun(trainCar, 10f))
+		{
+			if (!Main.Settings.enableUnownedServiceMultiplier &&
+				!Main.Settings.enableRepairWithoutLicense)
 				return;
-			
-            try
-            {
-                if (indicatorsInstance == null || trainCar == null) return;
-                if (!IsLocomotive(trainCar)) return;
+				
+			try
+			{
+				if (indicatorsInstance == null || trainCar == null)
+					return;
 
-                if (_inUiRewrite) return;
-                _inUiRewrite = true;
+				if (!IsLocomotive(trainCar))
+					return;
 
-                float mult = (float)GetEffectiveServiceMultiplier(trainCar);
-                string g = TryGetCarGuidForCache(trainCar);
+				if (_inUiRewrite)
+					return;
 
-                if (!ShouldApplyForIndicators(indicatorsInstance, g, mult))
-                {
-                    _inUiRewrite = false;
-                    return;
-                }
+				_inUiRewrite = true;
 
-                var modulesFld = AccessTools.Field(indicatorsInstance.GetType(), "resourceModules");
-                var modulesArr = modulesFld?.GetValue(indicatorsInstance) as Array;
-                if (modulesArr == null) { _inUiRewrite = false; return; }
+				float mult = (float)GetEffectiveServiceMultiplier(trainCar);
+				string guid = TryGetCarGuidForCache(trainCar);
 
-                for (int i = 0; i < modulesArr.Length; i++)
-                {
-                    var mod = modulesArr.GetValue(i);
-                    if (mod == null) continue;
+				if (!ShouldApplyForIndicators(indicatorsInstance, guid, mult))
+					return;
 
-                    var data = GetCashRegisterData(mod);
-                    if (data == null) continue;
+				var modulesFld = AccessTools.Field(indicatorsInstance.GetType(), "resourceModules");
+				var modulesArr = modulesFld?.GetValue(indicatorsInstance) as Array;
+				if (modulesArr == null)
+					return;
 
-                    var ppuField = AccessTools.Field(data.GetType(), "pricePerUnit");
-                    if (ppuField == null || ppuField.FieldType != typeof(float)) continue;
+				for (int i = 0; i < modulesArr.Length; i++)
+				{
+					var mod = modulesArr.GetValue(i);
+					if (mod == null)
+						continue;
 
-                    float current = (float)ppuField.GetValue(data);
+					var data = GetCashRegisterData(mod);
+					if (data == null)
+						continue;
 
-                    if (mult > 1f)
-                    {
-                        if (!UiPriceState.TryGetOriginal(data, out var original))
-                        {
-                            UiPriceState.MarkBoosted(data, current);
-                            original = current;
-                        }
-                        ppuField.SetValue(data, original * mult);
-                    }
-                    else
-                    {
-                        if (UiPriceState.TryGetOriginal(data, out var original))
-                        {
-                            ppuField.SetValue(data, original);
-                            UiPriceState.Clear(data);
-                        }
-                    }
+					var ppuField = AccessTools.Field(data.GetType(), "pricePerUnit");
+					if (ppuField == null || ppuField.FieldType != typeof(float))
+						continue;
 
-                    WriteModuleTextsFromData(mod, data);
-                }
+					float current = (float)ppuField.GetValue(data);
 
-                if (PersistentLocos.Main.Settings.enableLogging)
-                    PersistentLocos.Main.Log($"PitStop UI price {(mult > 1f ? "boost" : "normalize")} applied (guarded).");
-            }
-            catch (Exception ex)
-            {
-                if (PersistentLocos.Main.Settings.enableLogging)
-                    PersistentLocos.Main.Log("ApplyUiPriceBoostForIndicators error (non-fatal): " + ex.Message);
-            }
-            finally
-            {
-                _inUiRewrite = false;
-            }
-        }
+					if (mult > 1f)
+					{
+						if (!UiPriceState.TryGetOriginal(data, out var original))
+						{
+							UiPriceState.MarkBoosted(data, current);
+							original = current;
+						}
+
+						float newVal = original * mult;
+						if (Mathf.Abs(current - newVal) > 0.001f)
+							ppuField.SetValue(data, newVal);
+					}
+					else
+					{
+						if (UiPriceState.TryGetOriginal(data, out var original))
+						{
+							if (Mathf.Abs(current - original) > 0.001f)
+								ppuField.SetValue(data, original);
+
+							UiPriceState.Clear(data);
+						}
+					}
+
+					WriteModuleTextsFromData(mod, data);
+				}
+			}
+			catch (Exception ex)
+			{
+				if (PersistentLocos.Main.Settings.enableLogging)
+					PersistentLocos.Main.Log("ApplyUiPriceBoostForIndicators error: " + ex);
+			}
+			finally
+			{
+				_inUiRewrite = false;
+			}
+		}
 
         public static void WriteModuleTextsFromData(object module, object data)
         {
@@ -1157,6 +1460,8 @@ namespace PersistentLocos.Plus
 
         public static void RefreshPitStopUiForCar(object trainCar)
         {
+			ServiceMultiplierCache.Clear(trainCar);
+			
             try
             {
                 var pstType = AccessTools.TypeByName("PitStopStation");
@@ -1178,10 +1483,26 @@ namespace PersistentLocos.Plus
                     var selectedLivery = AccessTools.Property(selectedCar.GetType(), "carLivery")?.GetValue(selectedCar);
                     var indT = indicators?.GetType();
 
-                    var updType = AccessTools.Method(indT, "UpdatePricesDependingOnLocoType", new[] { selectedCar.GetType(), selectedLivery?.GetType() });
-                    if (updType == null)
-                        updType = indT.GetMethods(BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic)
-                                      .FirstOrDefault(m => m.Name == "UpdatePricesDependingOnLocoType" && m.GetParameters().Length >= 1);
+                    MethodInfo updType = null;
+
+					if (selectedLivery != null)
+					{
+						updType = AccessTools.Method(
+							indT,
+							"UpdatePricesDependingOnLocoType",
+							new[] { selectedCar.GetType(), selectedLivery.GetType() }
+						);
+					}
+
+					if (updType == null)
+					{
+						updType = indT
+							.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+							.FirstOrDefault(m =>
+								m.Name == "UpdatePricesDependingOnLocoType" &&
+								m.GetParameters().Length >= 1
+							);
+					}
 
                     var updIndep = AccessTools.Method(indT, "UpdateIndependentPrices", new[] { selectedCar.GetType() })
                                   ?? indT.GetMethods(BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic)
@@ -1230,10 +1551,26 @@ namespace PersistentLocos.Plus
                     var selectedLivery = AccessTools.Property(selectedCar.GetType(), "carLivery")?.GetValue(selectedCar);
                     var indT = indicators.GetType();
 
-                    var updType = AccessTools.Method(indT, "UpdatePricesDependingOnLocoType", new[] { selectedCar.GetType(), selectedLivery?.GetType() });
-                    if (updType == null)
-                        updType = indT.GetMethods(BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic)
-                                      .FirstOrDefault(m => m.Name == "UpdatePricesDependingOnLocoType" && m.GetParameters().Length >= 1);
+                    MethodInfo updType = null;
+
+					if (selectedLivery != null)
+					{
+						updType = AccessTools.Method(
+							indT,
+							"UpdatePricesDependingOnLocoType",
+							new[] { selectedCar.GetType(), selectedLivery.GetType() }
+						);
+					}
+
+					if (updType == null)
+					{
+						updType = indT
+							.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+							.FirstOrDefault(m =>
+								m.Name == "UpdatePricesDependingOnLocoType" &&
+								m.GetParameters().Length >= 1
+							);
+					}
 
                     var updIndep = AccessTools.Method(indT, "UpdateIndependentPrices", new[] { selectedCar.GetType() })
                                   ?? indT.GetMethods(BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic)
@@ -1295,8 +1632,7 @@ namespace PersistentLocos.Plus
 			{
 				__result *= totalMult;
 				
-				if (Main.Settings.enableLogging)
-					Main.Log($"[PriceCheck] {car.ID}: Mult {totalMult:0.##}x -> Endpreis: {__result:0.00}");
+				Main.Log($"[PriceCheck] {car.ID}: Mult {totalMult:0.##}x -> Endpreis: {__result:0.00}");
 			}
 		}
 	}

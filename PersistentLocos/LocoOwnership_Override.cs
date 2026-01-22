@@ -8,6 +8,7 @@ namespace PersistentLocos
     internal static class LocoOwnership_Override
     {
         private static bool _patched;
+		public static bool IsActive => _patched;
         private static Harmony _harmony;
 
         public static void TryPatch(Assembly loAsm = null)
@@ -22,13 +23,11 @@ namespace PersistentLocos
 
                 _patched = true;
 
-                if (Main.Settings?.enableLogging == true)
-                    Main.Log(" LocoOwnership detected – LO override enabled.");
+                Main.Log(" LocoOwnership detected – LO override enabled.");
             }
             catch (Exception ex)
             {
-                if (Main.Settings?.enableLogging == true)
-                    Main.Log(" LocoOwnership not installed: " + ex.Message);
+                Main.Log(" LocoOwnership not installed: " + ex.Message);
             }
         }
     }

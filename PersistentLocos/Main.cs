@@ -130,6 +130,7 @@ namespace PersistentLocos
         static void OnSaveGUI(UnityModManager.ModEntry modEntry)
         {
 			Settings.Save(modEntry);
+			PersistentLocos.Plus.ServiceMultiplierCache.ClearAll();
         }
 
         static float _timeSinceStart = 0f;
@@ -163,7 +164,7 @@ namespace PersistentLocos
         public static void Log(string msg)
         {
             if (Settings != null && !Settings.enableLogging) return;
-            Mod?.Logger.Log("[PersistentLocos] " + msg);
+            Mod?.Logger.Log("[DEBUG] " + msg);
         }
         public static void Warn(string msg) => Mod?.Logger.Warning("[Warning] " + msg);
         public static void Error(string msg) => Mod?.Logger.Error("[ERROR] " + msg);

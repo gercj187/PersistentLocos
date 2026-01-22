@@ -10,7 +10,7 @@ namespace PersistentLocos
 
         public bool enablePersistentDamage = true;
         
-        public bool assumeNonOwnedWhenUnknown = true;
+        //public bool assumeNonOwnedWhenUnknown = true;
 
         // --- Unowned multiplier ---
         public bool enableUnownedServiceMultiplier = true;
