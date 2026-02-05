@@ -294,6 +294,37 @@ namespace PersistentLocos
         }
     }
 	
+	[HarmonyPatch(typeof(CommsRadioCarDeleter), "Awake")]
+	internal static class Patch_CommsRadioCarDeleter_Awake
+	{
+		static void Postfix(CommsRadioCarDeleter __instance)
+		{
+			if (__instance == null)
+				return;
+
+			__instance.CarDeleted += OnCarDeleted;
+		}
+
+		private static void OnCarDeleted(TrainCar car)
+		{
+			if (car == null)
+				return;
+
+			var livery = car.carLivery;
+			bool isLoco = car.IsLoco;
+
+			if (!isLoco)
+				return;
+
+			LocoSpawnState.Decrement();
+
+			if (Main.Settings != null && Main.Settings.enableLogging)
+			{
+				Main.Log($"CommsRadioCarDeleter \u2192 CarDeleted for {car.ID} ({livery?.id}), counter-- \u2192 {LocoSpawnState.Count}");
+			}
+		}
+	}
+	
     public class CoroutineDispatcher : MonoBehaviour
     {
         private static CoroutineDispatcher _instance;
@@ -319,48 +350,75 @@ namespace PersistentLocos
     }
 
     public static class LocoSpawnState
-    {
-        private static int _count = 0;
-        public static int Count => _count;
+	{
+		private static int _count = 0;
+		public static int Count => _count;
 
-        private const string CountSaveKey = "PersistentLocos_LocoCount";
-        private const string LimitSaveKey = "PersistentLocos_LocoLimit";
+		private const string CountSaveKey = "PersistentLocos_LocoCount";
+		private const string LimitSaveKey = "PersistentLocos_LocoLimit";
 
-        public static void LoadFrom(SaveGameData saveData)
-        {
-            int? maybeCount = saveData.GetInt(CountSaveKey);
-            _count = maybeCount ?? 0;
+		public static void LoadFrom(SaveGameData saveData)
+		{
+			int? maybeCount = saveData.GetInt(CountSaveKey);
+			if (maybeCount.HasValue)
+			{
+				_count = maybeCount.Value;
+				Main.Log($"Loaded locomotive count from save: {_count}");
+			}
+			else
+			{
+				_count = 0;
+				saveData.SetInt(CountSaveKey, _count);
+				Main.Log("No locomotive count in save – initializing counter to 0.");
+			}
 
-            int? maybeLimit = saveData.GetInt(LimitSaveKey);
-            if (maybeLimit.HasValue)
-            {
-                Main.Settings.LocoLimit = maybeLimit.Value;
-                Main.Log($"Loaded LocoLimit from save: {Main.Settings.LocoLimit}");
-            }
-            else
-            {
-                Main.Log("No LocoLimit saved – using default or settings value");
-            }
+			int? maybeLimit = saveData.GetInt(LimitSaveKey);
+			if (maybeLimit.HasValue)
+			{
+				Main.Settings.LocoLimit = maybeLimit.Value;
+				Main.Log($"Loaded LocoLimit from save: {Main.Settings.LocoLimit}");
+			}
+			else
+			{
+				Main.Log("No LocoLimit saved – using default or settings value");
+			}
+		}
 
-            Main.Log($"Loaded locomotive count from save: {_count}");
-        }
+		public static void SaveTo(SaveGameData saveData)
+		{
+			saveData.SetInt(CountSaveKey, _count);
+			saveData.SetInt(LimitSaveKey, Main.Settings.LocoLimit);
+		}
 
-        public static void SaveTo(SaveGameData saveData)
-        {
-            saveData.SetInt(CountSaveKey, _count);
-            saveData.SetInt(LimitSaveKey, Main.Settings.LocoLimit);
-        }
+		public static void Reset()
+		{
+			_count = 0;
+		}
 
-        public static void Reset()
-        {
-            _count = 0;
-        }
+		public static void Increment()
+		{
+			_count++;
+		}
 
-        public static void Increment()
-        {
-            _count++;
-        }
-    }
+		public static void Decrement()
+		{
+			if (_count > 0)
+			{
+				_count--;
+				if (Main.Settings != null && Main.Settings.enableLogging)
+				{
+					Main.Log($"LocoSpawnState.Decrement \u2192 Count={_count}");
+				}
+			}
+			else
+			{
+				if (Main.Settings != null && Main.Settings.enableLogging)
+				{
+					Main.Log("LocoSpawnState.Decrement called but count is already 0 \u2013 ignoring.");
+				}
+			}
+		}
+	}
 }
 
 namespace PersistentLocos.Plus
