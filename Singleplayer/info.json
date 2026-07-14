@@ -1,0 +1,12 @@
+{
+	"Id": "PersistentLocos",
+	"Version": "1.06.0",
+	"DisplayName": "PersistentLocos",
+	"Author": "CJ187",
+	"Credits": "Coookie, NotAnOption and ChatGPT",
+	"EntryMethod": "PersistentLocos.Main.Load",
+	"ManagerVersion": "0.27.2",
+	"HomePage": "https://www.nexusmods.com/derailvalley/mods/1159",
+	"Repository": "https://raw.githubusercontent.com/gercj187/PersistentLocos/main/Singleplayer/repository.json",
+	"MultiplayerCompatibility": "Incompatible"
+}
