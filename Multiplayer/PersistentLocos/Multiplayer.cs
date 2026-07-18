@@ -13,36 +13,21 @@ namespace PersistentLocos
 	// PACKETS
 	// ============================================================
 
-	/// <summary>
-	/// Client ist vollständig geladen und fordert den aktuellen
-	/// Zustand des Hosts an.
-	/// </summary>
 	public class ServerBoundPersistentLocosReadyPacket : IPacket
 	{
 		public bool Ready { get; set; }
 	}
 
-	/// <summary>
-	/// Spielrelevante Einstellungen des Hosts.
-	/// </summary>
 	public class ClientBoundPersistentLocosSettingsPacket : IPacket
 	{
 		public int LocoLimit { get; set; }
-
 		public bool EnablePersistentDamage { get; set; }
-
 		public bool EnableUnownedServiceMultiplier { get; set; }
-
 		public float UnownedServiceMultiplier { get; set; }
-
 		public bool EnableRepairWithoutLicense { get; set; }
-
 		public float RepairWithoutLicenseMultiplier { get; set; }
 	}
 
-	/// <summary>
-	/// Absoluter Lokomotivzähler des Hosts.
-	/// </summary>
 	public class ClientBoundPersistentLocosStatePacket : IPacket
 	{
 		public int LocoCount { get; set; }
@@ -56,9 +41,6 @@ namespace PersistentLocos
 	{
 		private static GameObject _runtimeObject;
 
-		/// <summary>
-		/// true, wenn dieses Spiel der Multiplayer-Host ist.
-		/// </summary>
 		public static bool IsHost
 		{
 			get
@@ -77,9 +59,6 @@ namespace PersistentLocos
 			}
 		}
 
-		/// <summary>
-		/// true, wenn dieses Spiel als Client verbunden ist.
-		/// </summary>
 		public static bool IsClient
 		{
 			get
@@ -98,23 +77,9 @@ namespace PersistentLocos
 			}
 		}
 
-		public static bool IsMultiplayer =>
-			IsHost || IsClient;
-
-		/// <summary>
-		/// Die Multiplayer-Version darf Weltzustand nur im
-		/// Singleplayer/Fallback oder auf dem Host verändern.
-		/// </summary>
-		public static bool CanModifyWorld =>
-			!IsMultiplayer || IsHost;
-
-		/// <summary>
-		/// Clients dürfen keinen lokalen PersistentLocos-Zähler
-		/// aus ihrem Savegame laden oder hineinschreiben.
-		/// </summary>
-		public static bool CanUseSaveData =>
-			!IsMultiplayer || IsHost;
-
+		public static bool IsMultiplayer => IsHost || IsClient;
+		public static bool CanModifyWorld => !IsMultiplayer || IsHost;
+		public static bool CanUseSaveData => !IsMultiplayer || IsHost;
 		public static void Initialize()
 		{
 			if (_runtimeObject != null)
@@ -122,26 +87,14 @@ namespace PersistentLocos
 				return;
 			}
 
-			_runtimeObject =
-				new GameObject(
-					"PersistentLocos_Multiplayer");
+			_runtimeObject =new GameObject("PersistentLocos_Multiplayer");
+			UnityEngine.Object.DontDestroyOnLoad(_runtimeObject);
+			_runtimeObject.AddComponent<PersistentLocosMPClient>();
+			_runtimeObject.AddComponent<PersistentLocosMPServer>();
 
-			UnityEngine.Object.DontDestroyOnLoad(
-				_runtimeObject);
-
-			_runtimeObject.AddComponent<
-				PersistentLocosMPClient>();
-
-			_runtimeObject.AddComponent<
-				PersistentLocosMPServer>();
-
-			Main.Log(
-				"[MP] Multiplayer runtime created.");
+			Main.Log("[MP] Multiplayer runtime created.");
 		}
 
-		/// <summary>
-		/// Wird nach jeder Änderung des Host-Lokzählers aufgerufen.
-		/// </summary>
 		public static void NotifyLocoCountChanged()
 		{
 			if (!IsHost)
@@ -153,9 +106,6 @@ namespace PersistentLocos
 				.BroadcastLocoCount();
 		}
 
-		/// <summary>
-		/// Wird nach dem Speichern der UMM-Einstellungen aufgerufen.
-		/// </summary>
 		public static void NotifySettingsChanged()
 		{
 			if (!IsHost)
@@ -163,8 +113,7 @@ namespace PersistentLocos
 				return;
 			}
 
-			PersistentLocosMPServer.Instance?
-				.BroadcastSettings();
+			PersistentLocosMPServer.Instance?.BroadcastSettings();
 		}
 	}
 
@@ -218,54 +167,52 @@ namespace PersistentLocos
 
 		private void RefreshConnectionState()
 		{
-			bool isClientNow =
-				PL_Multiplayer.IsClient;
-
-			IClient currentClient =
-				MultiplayerAPI.Client;
-
-			bool clientChanged =
-				!ReferenceEquals(
-					_client,
-					currentClient);
-
-			bool roleChanged =
-				_wasClient != isClientNow;
+			bool isClientNow = PL_Multiplayer.IsClient;
+			IClient currentClient = MultiplayerAPI.Client;
+			bool clientChanged = !ReferenceEquals(_client,currentClient);
+			bool roleChanged = _wasClient != isClientNow;
 
 			if (clientChanged)
-			{
-				_client = currentClient;
+            {
+                if (_client != null)
+                {
+                    Main.RestoreLocalSettings();
+                }
 
-				_registered = false;
-				_localStateCleared = false;
-				_snapshotReceived = false;
-				_nextReadyRequestTime = 0f;
+                _client = currentClient;
 
-				Main.Log(
-					"[MP] Client connection changed. " +
-					"Registration state reset.");
-			}
+                _registered = false;
+                _localStateCleared = false;
+                _snapshotReceived = false;
+                _nextReadyRequestTime = 0f;
+
+                Main.Log(
+                    "[MP] Client connection changed. " +
+                    "Local settings restored and registration " +
+                    "state reset.");
+            }
 
 			if (roleChanged)
-			{
-				_wasClient = isClientNow;
+            {
+                bool wasClientBefore =_wasClient;
+                _wasClient =isClientNow;
 
-				_localStateCleared = false;
-				_snapshotReceived = false;
-				_nextReadyRequestTime = 0f;
+                _localStateCleared = false;
+                _snapshotReceived = false;
+                _nextReadyRequestTime = 0f;
 
-				Main.Log(
-					isClientNow
-						? "[MP] Entered multiplayer as client."
-						: "[MP] Left multiplayer client state.");
-			}
+                if (wasClientBefore && !isClientNow)
+                {
+                    Main.RestoreLocalSettings();
+                }
 
-			/*
-			 * Ein Client darf seinen lokalen Singleplayer-Zähler
-			 * nicht in die Host-Sitzung übernehmen.
-			 */
-			if (isClientNow &&
-				!_localStateCleared)
+                Main.Log(isClientNow
+                        ? "[MP] Entered multiplayer as client."
+                        : "[MP] Left multiplayer client state. " +
+                          "Local settings restored.");
+            }
+
+			if (isClientNow && !_localStateCleared)
 			{
 				LocoSpawnState.SetFromHost(0);
 
@@ -348,66 +295,36 @@ namespace PersistentLocos
 				"[MP] Host settings and state requested.");
 		}
 
-		private void OnSettingsReceived(
-			ClientBoundPersistentLocosSettingsPacket packet)
-		{
-			if (packet == null ||
-				Main.Settings == null)
+		private void OnSettingsReceived(ClientBoundPersistentLocosSettingsPacket packet)
+        {
+            if (packet == null)
+                return;
+
+            Settings hostSettings = new Settings
 			{
-				return;
-			}
+				LocoLimit = Mathf.Clamp(packet.LocoLimit,1,50),
+				enablePersistentDamage = packet.EnablePersistentDamage,
+				enableUnownedServiceMultiplier = packet.EnableUnownedServiceMultiplier,
+				unownedServiceMultiplier = Mathf.Clamp(packet.UnownedServiceMultiplier,1f,5f),
+				enableRepairWithoutLicense = packet.EnableRepairWithoutLicense,
+				repairWithoutLicenseMultiplier = Mathf.Clamp(packet.RepairWithoutLicenseMultiplier,1.5f,10f),
+				enableLogging = Main.LocalSettings != null &&Main.LocalSettings.enableLogging
+			};
 
-			/*
-			 * In der separaten Multiplayer-Version übernimmt der
-			 * Client für die laufende Sitzung direkt die Hostwerte.
-			 *
-			 * OnSaveGUI wird dabei nicht aufgerufen, daher werden
-			 * die Werte nicht automatisch in settings.xml gespeichert.
-			 */
-			Main.Settings.LocoLimit =
-				Mathf.Clamp(
-					packet.LocoLimit,
-					1,
-					50);
+            Main.UseTemporaryHostSettings(hostSettings);
+            PersistentLocos.Plus.ServiceMultiplierCache.ClearAll();
 
-			Main.Settings.enablePersistentDamage =
-				packet.EnablePersistentDamage;
+            try
+            {
+                PersistentLocos.Plus.Helpers.RefreshPitStopsForAllSelected();
+            }
+            catch
+            { }
 
-			Main.Settings.enableUnownedServiceMultiplier =
-				packet.EnableUnownedServiceMultiplier;
+            Main.Log("[MP] Temporary host settings applied.");
+        }
 
-			Main.Settings.unownedServiceMultiplier =
-				Mathf.Max(
-					1f,
-					packet.UnownedServiceMultiplier);
-
-			Main.Settings.enableRepairWithoutLicense =
-				packet.EnableRepairWithoutLicense;
-
-			Main.Settings.repairWithoutLicenseMultiplier =
-				Mathf.Max(
-					1f,
-					packet.RepairWithoutLicenseMultiplier);
-
-			PersistentLocos.Plus
-				.ServiceMultiplierCache.ClearAll();
-
-			try
-			{
-				PersistentLocos.Plus.Helpers
-					.RefreshPitStopsForAllSelected();
-			}
-			catch
-			{
-				// Ein offener Pitstop ist nicht garantiert vorhanden.
-			}
-
-			Main.Log(
-				"[MP] Host settings applied.");
-		}
-
-		private void OnStateReceived(
-			ClientBoundPersistentLocosStatePacket packet)
+		private void OnStateReceived(ClientBoundPersistentLocosStatePacket packet)
 		{
 			if (packet == null)
 			{
@@ -427,19 +344,21 @@ namespace PersistentLocos
 		}
 
 		private void OnDestroy()
-		{
-			if (Instance == this)
-			{
-				Instance = null;
-			}
+        {
+            Main.RestoreLocalSettings();
 
-			_client = null;
-			_registered = false;
-			_wasClient = false;
-			_localStateCleared = false;
-			_snapshotReceived = false;
-			_nextReadyRequestTime = 0f;
-		}
+            if (Instance == this)
+            {
+                Instance = null;
+            }
+
+            _client = null;
+            _registered = false;
+            _wasClient = false;
+            _localStateCleared = false;
+            _snapshotReceived = false;
+            _nextReadyRequestTime = 0f;
+        }
 	}
 
 	// ============================================================

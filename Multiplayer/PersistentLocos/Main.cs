@@ -10,17 +10,72 @@ namespace PersistentLocos
     public static class Main
     {
         public static UnityModManager.ModEntry Mod;
+		public static Settings LocalSettings;
         public static Settings Settings;
         private static Harmony _harmony;
 		private static bool _warmUpStarted = false;
-		private static bool _runtimeRepairWithoutLicense;
+        private static bool _runtimeRepairWithoutLicense;
 
-        public static bool Load(UnityModManager.ModEntry modEntry)
+        internal static void UseTemporaryHostSettings(Settings hostSettings)
         {
-            Mod = modEntry;
-            Settings = UnityModManager.ModSettings.Load<Settings>(modEntry) ?? new Settings();
-			
-			_runtimeRepairWithoutLicense  = Settings.enableRepairWithoutLicense;
+            if (hostSettings == null)
+                return;
+
+            Settings = hostSettings;
+
+            Log(
+                "[MP] Temporary host settings activated. " +
+                "Local settings remain unchanged.");
+        }
+
+        internal static void RestoreLocalSettings()
+        {
+            if (LocalSettings == null)
+                return;
+
+            Settings = LocalSettings.Clone();
+
+            PersistentLocos.Plus
+                .ServiceMultiplierCache
+                .ClearAll();
+
+            try
+            {
+                PersistentLocos.Plus.Helpers.RefreshPitStopsForAllSelected();
+            }
+            catch
+            { }
+
+            Log(
+                "[MP] Local PersistentLocos settings restored.");
+        }
+
+        private static void SaveLocalSettings(UnityModManager.ModEntry modEntry)
+        {
+            if (LocalSettings == null ||
+                Settings == null)
+            {
+                return;
+            }
+
+            LocalSettings.CopyFrom(Settings);
+            LocalSettings.Save(modEntry);
+        }
+
+		public static bool Load(UnityModManager.ModEntry modEntry)
+        {
+            Mod =modEntry;
+
+            LocalSettings =UnityModManager.ModSettings.Load<Settings>(modEntry);
+
+            if (LocalSettings == null)
+            {
+                LocalSettings = new Settings();
+            }
+
+            Settings = LocalSettings.Clone();
+            
+            _runtimeRepairWithoutLicense = Settings.enableRepairWithoutLicense;
 
             modEntry.OnToggle = OnToggle;
             modEntry.OnGUI = OnGUI;
@@ -37,7 +92,7 @@ namespace PersistentLocos
 		private static bool RestartRequired()
 		{
 			return
-			  Settings.enableRepairWithoutLicense != _runtimeRepairWithoutLicense;
+			Settings.enableRepairWithoutLicense != _runtimeRepairWithoutLicense;
 		}
 
 
@@ -140,17 +195,24 @@ namespace PersistentLocos
             //Settings.enableLogging = GUILayout.Toggle(Settings.enableLogging, "Enable debug logging");
         }
 
-        static void OnSaveGUI(UnityModManager.ModEntry modEntry)
+		static void OnSaveGUI(UnityModManager.ModEntry modEntry)
         {
-			if (PL_Multiplayer.IsClient)
-			{
-				Main.Log("[MP] Client settings save ignored.");
-				return;
-			}
+            if (PL_Multiplayer.IsClient)
+            {
+                Main.Log(
+                    "[MP] Client settings save ignored. " +
+                    "Temporary host values were not persisted.");
 
-			Settings.Save(modEntry);
-			PersistentLocos.Plus.ServiceMultiplierCache.ClearAll();
-			PL_Multiplayer.NotifySettingsChanged();
+                return;
+            }
+
+            SaveLocalSettings(modEntry);
+
+            PersistentLocos.Plus
+                .ServiceMultiplierCache
+                .ClearAll();
+
+            PL_Multiplayer.NotifySettingsChanged();
         }
 
         static float _timeSinceStart = 0f;
