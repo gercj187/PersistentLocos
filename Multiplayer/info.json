@@ -1,14 +1,14 @@
 {
-	"Id": "PersistentLocosMP",
-	"Version": "1.06.0",
-	"DisplayName": "PersistentLocos (MP)",
+	"Id": "JunctionMaintenanceMP",
+	"Version": "1.03.1",
+	"DisplayName": "Junction Maintenance (MP)",
 	"Author": "CJ187",
-	"Credits": "Coookie, NotAnOption and ChatGPT",
-	"EntryMethod": "PersistentLocos.Main.Load",
-	"AssemblyName": "PersistentLocos.dll",
+	"Credits": "Coookie, NotAnOption and ChatGPT",	
+	"AssemblyName": "JunctionMaintenance.dll",
+	"EntryMethod": "JunctionMaintenance.Main.Load",
 	"ManagerVersion": "0.27.2",
-	"HomePage": "https://www.nexusmods.com/derailvalley/mods/1159",
-	"Repository": "https://raw.githubusercontent.com/gercj187/PersistentLocos/main/Multiplayer/repository.json",
+	"HomePage": "https://www.nexusmods.com/derailvalley/mods/1251",
+	"Repository": "https://raw.githubusercontent.com/gercj187/JunctionMaintenance/main/Multiplayer/repository.json",
 	"LoadAfter": [
 		"Multiplayer"
 	],
