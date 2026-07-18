@@ -1,9 +1,8 @@
-{
-	"Releases": [
-		{
-			"Id": "JunctionMaintenanceMP",
-			"Version": "1.03.1",
-			"DownloadUrl": "https://github.com/gercj187/JunctionMaintenance/releases/download/JunctionMaintenanceMP/JunctionMaintenanceMP_v1.03.1.zip"
-		}
-	]
-}
+[
+	{
+		"Id": "PersistentLocosMP",
+		"Version": "1.06.1",
+		"DownloadUrl": "https://github.com/gercj187/PersistentLocos/releases/download/PersistentLocoMP/PersistentLocosMP_v1.06.1.zip"
+	}
+]
+

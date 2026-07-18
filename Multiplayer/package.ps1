@@ -15,12 +15,8 @@ Write-Host ""
 # -------------------------------------------------
 # Checks
 # -------------------------------------------------
-if (!(Test-Path "info.json"))    { throw "info.json fehlt!" }
-if (!(Test-Path "build"))        { throw "build/-Ordner fehlt!" }
-
-# NEW
-if (!(Test-Path "license.json")) { throw "license.json fehlt!" }   # NEW
-if (!(Test-Path "icon.png"))     { throw "icon.png fehlt!" }       # NEW
+if (!(Test-Path "info.json")) { throw "info.json fehlt!" }
+if (!(Test-Path "build"))     { throw "build/-Ordner fehlt!" }
 
 # -------------------------------------------------
 # Mod-Infos
@@ -57,8 +53,6 @@ New-Item -Path $ZipOutDir -ItemType Directory -Force | Out-Null
 # -------------------------------------------------
 $FilesToInclude = @(
     "info.json",
-    "license.json",   # NEW
-    "icon.png",       # NEW
     "build\*",
     "LICENSE"
 )
